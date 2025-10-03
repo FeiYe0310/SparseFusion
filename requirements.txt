@@ -1,0 +1,26 @@
+# ==============================================================================
+#  安装依赖建议
+# ==============================================================================
+# 1. 优先根据您的 CUDA 版本，通过官网指令安装 PyTorch:
+#    - 访问: https://pytorch.org/get-started/locally/
+#    - 例如 CUDA 12.1 的指令为:
+#      pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# 2. 然后再通过此文件安装其余依赖:
+#    pip install -r requirements.txt
+# ==============================================================================
+
+# PyTorch (核心库, 版本请参考上方建议)
+torch
+
+# JAX and JAXlib (用于进化算法计算)
+jax
+jaxlib
+
+# Hugging Face 生态 (模型和数据集加载)
+transformers
+datasets
+
+# 其他辅助库
+numpy
+tqdm

@@ -19,6 +19,7 @@ import argparse
 # Since this script is now inside the 'natural_niches' directory,
 # we can import directly from the other files in this directory.
 from natural_niches_fn import run_natural_niches
+from config import DEFAULT_MODEL_1, DEFAULT_MODEL_2
 
 def main():
     """
@@ -28,14 +29,14 @@ def main():
     parser.add_argument(
         "--model1_path",
         type=str,
-        default="models/wizardmath_7b",
-        help="Path to the first base model directory, relative to the script location."
+        default=DEFAULT_MODEL_1,
+        help=f"Path to the first base model. Defaults to '{DEFAULT_MODEL_1}' from config.py."
     )
     parser.add_argument(
         "--model2_path",
         type=str,
-        default="models/agentevol-7b",
-        help="Path to the second base model directory, relative to the script location."
+        default=DEFAULT_MODEL_2,
+        help=f"Path to the second base model. Defaults to '{DEFAULT_MODEL_2}' from config.py."
     )
     parser.add_argument("--runs", type=int, default=1, help="Number of independent evolutionary runs.")
     parser.add_argument("--pop_size", type=int, default=10, help="Number of individuals in the population.")

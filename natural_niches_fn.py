@@ -25,6 +25,7 @@ from helper_fn import (
     get_pre_trained_models,
     jax_flattened_to_pytorch_model,
 )
+from config import GSM8K_DIR, RESULTS_DIR
 
 
 def create_evaluation_fn_for_llm(
@@ -174,8 +175,8 @@ def run_natural_niches(
     no_crossover: bool,
     no_splitpoint: bool,
     alpha: float = 1.0,
-    model1_path: str = "models/wizardmath_7b",
-    model2_path: str = "models/agentevol-7b",
+    model1_path: str = None,
+    model2_path: str = None,
 ) -> list:
     use_matchmaker, use_crossover, use_splitpoint = (
         not no_matchmaker,
@@ -218,17 +219,15 @@ def run_natural_niches(
     if is_main_process:
         print("Loading and preprocessing GSM8K dataset from local directory...")
         # Let main process prepare the dataset. It will be cached for others.
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        dataset_path = os.path.join(base_dir, "gsm8k")
-        load_dataset(dataset_path)
+        # Path is now imported from the global config file.
+        load_dataset(GSM8K_DIR)
 
     # Barrier to ensure all processes wait for rank 0 to finish caching.
     dist.barrier()
     
     # Now all processes can load from the cache without disk contention.
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    dataset_path = os.path.join(base_dir, "gsm8k")
-    dataset = load_dataset(dataset_path)
+    # Path is now imported from the global config file.
+    dataset = load_dataset(GSM8K_DIR)
     
     def preprocess_function(examples):
         inputs = [q + " " + a for q, a in zip(examples["question"], examples["answer"])]
@@ -361,59 +360,56 @@ def run_natural_niches(
             # Barrier to ensure archive update is complete before the next iteration
             dist.barrier()
 
-            # Perform periodic test evaluation
-            if i % 100 == 0:
-                # 1. Main process identifies the best parameters
+            # --- Periodic Full Archive Evaluation ---
+            # Every 10 forward passes, evaluate all models currently in the archive.
+            if (i + 1) % 10 == 0:
                 if is_main_process:
-                    train_fitness = scores.mean(axis=1)
-                    best_individual_idx = jnp.argmax(train_fitness)
-                    best_params = archive[best_individual_idx]
-                    
-                    # 2. Prepare for broadcast by converting to float32 tensor
-                    best_params_tensor = torch.from_numpy(np.array(best_params.astype(jnp.float32)))
-                else:
-                    # Workers prepare an empty float32 tensor
-                    best_params_tensor = torch.empty(num_params_llm, dtype=torch.float32)
+                    print(f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---")
                 
-                # 3. All processes participate in the broadcast
-                dist.broadcast(best_params_tensor, src=0)
-                
-                # 4. All processes convert back to bfloat16 for evaluation
-                best_params_bf16 = jnp.array(best_params_tensor.numpy()).astype(jnp.bfloat16)
+                # This loop runs on all processes to keep them in sync for broadcasts.
+                for j in range(pop_size):
+                    # 1. Main process gets the individual parameters for broadcast.
+                    if is_main_process:
+                        individual_params = archive[j]
+                        params_tensor = torch.from_numpy(np.array(individual_params.astype(jnp.float32)))
+                    else:
+                        # Workers prepare an empty tensor.
+                        params_tensor = torch.empty(num_params_llm, dtype=torch.float32)
 
-                # 5. All processes evaluate the best model on the test set
-                test_scores_vector = test_eval_fn(best_params_bf16)
+                    # 2. Broadcast the parameters from main process to all workers.
+                    dist.broadcast(params_tensor, src=0)
 
-                # 6. Main process logs the results
-                if is_main_process:
-                    result = results[-1]
-                    result["evals"].append(i)
-                    if store_train_results:
-                        result["train_values"].append(train_fitness.max())
+                    # 3. All processes convert the tensor back to a JAX array.
+                    params_bf16 = jnp.array(params_tensor.numpy()).astype(jnp.bfloat16)
 
-                    acc = jnp.mean(test_scores_vector)
-                    result["test_values"].append(acc)
-                    print(f"Run {run+1}, Forward pass {i}, Test acc: {acc:.4f}")
+                    # 4. All processes evaluate the model on the test set.
+                    test_scores_vector = test_eval_fn(params_bf16)
+
+                    # 5. The main process calculates and prints the result.
+                    if is_main_process:
+                        acc = jnp.mean(test_scores_vector)
+                        # We can also log this to the results dictionary if needed
+                        # For now, just printing for clear visibility.
+                        print(f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}")
 
     # Final barrier to ensure all processes finish before main process returns
     dist.barrier()
     
     # --- Save the final best model (main process only) ---
     if is_main_process:
-        if runs > 0 and results and "test_values" in results[-1]:
+        if runs > 0:
             # Find the best parameters from the final archive state of the last run
             train_fitness = scores.mean(axis=1)
             best_individual_idx = jnp.argmax(train_fitness)
             best_params = archive[best_individual_idx]
             
-            # Create a directory for results if it doesn't exist
-            results_dir = "results"
-            os.makedirs(results_dir, exist_ok=True)
+            # Directory path is now imported from the global config file.
+            os.makedirs(RESULTS_DIR, exist_ok=True)
             
             # Save the best parameters to a file
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = os.path.join(results_dir, f"best_model_run_{run+1}_{timestamp}.npz")
+            save_path = os.path.join(RESULTS_DIR, f"best_model_run_{run+1}_{timestamp}.npz")
             
             print(f"\n🏆 Saving the best model from the last run to: {save_path}")
             jnp.savez(save_path, params=best_params)
