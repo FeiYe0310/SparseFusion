@@ -5,9 +5,6 @@ import pickle
 import argparse
 
 from natural_niches_fn import run_natural_niches
-from map_elites_fn import run_map_elites
-from cma_es_fn import run_cma_es
-from brute_force_fn import run_brute_force
 
 
 def parse_arguments():

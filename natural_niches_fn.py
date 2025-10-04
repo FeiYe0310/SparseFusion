@@ -182,6 +182,7 @@ def run_natural_niches(
     no_crossover: bool,
     no_splitpoint: bool,
     alpha: float = 1.0,
+    use_pre_trained: bool = False,
     model1_path: str = "",
     model2_path: str = "",
 ) -> list:
