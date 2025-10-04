@@ -1,1 +1,7 @@
-__pycache__/\n*.pyc\n*.pyo\n.ipynb_checkpoints/\nresults/\ngsm8k/\nmodels/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+results/
+gsm8k/
+models/

@@ -197,22 +197,24 @@ def run_natural_niches(
     # --- LLM & Data Loading ---
     if is_main_process:
         print("Loading tokenizer and models...")
-    # All processes need to load the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model1_path)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
     # Only the main process loads, flattens, and then broadcasts the initial models
     if is_main_process:
-        model_1, model_2, param_shapes = get_pre_trained_models(model1_path, model2_path)
+        model_1, model_2, param_shapes, tokenizer = get_pre_trained_models(
+            model1_path,
+            model2_path,
+            return_tokenizer=True,
+        )
         # JAX arrays can be broadcast as a list of objects
-        initial_models_obj = [model_1, model_2, param_shapes]
+        initial_models_obj = [model_1, model_2, param_shapes, tokenizer]
         dist.broadcast_object_list(initial_models_obj, src=0)
     else:
         # Other processes receive the broadcasted data
-        initial_models_obj = [None, None, None]
+        initial_models_obj = [None, None, None, None]
         dist.broadcast_object_list(initial_models_obj, src=0)
-        model_1, model_2, param_shapes = initial_models_obj
+        model_1, model_2, param_shapes, tokenizer = initial_models_obj
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     num_params_llm = model_1.shape[0]
 
