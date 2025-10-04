@@ -5,3 +5,4 @@ __pycache__/
 results/
 gsm8k/
 models/
+*_yanjian*

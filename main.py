@@ -28,6 +28,9 @@ def parse_arguments():
         choices=["natural_niches", "ga", "map_elites", "cma_es", "brute_force"],
     )
     parser.add_argument("--total_forward_passes", type=int, default=50000)
+    # add model1_path and model2_path
+    parser.add_argument("--model1_path", type=str, default="models/wizardmath_7b")
+    parser.add_argument("--model2_path", type=str, default="models/agentevol-7b")
 
     return parser.parse_args()
 
