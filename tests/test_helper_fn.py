@@ -101,12 +101,24 @@ def test_model_outputs_preserved_after_embedding_alignment() -> None:
         "Math and programming questions appear on Stack Overflow.",
     ]
 
-    input_ids1 = tokenizer1(sentences, return_tensors="pt", padding=True)["input_ids"]
-    input_ids2 = tokenizer2(sentences, return_tensors="pt", padding=True)["input_ids"]
+    encoded1 = tokenizer1(sentences, return_tensors="pt", padding=True)
+    encoded2 = tokenizer2(sentences, return_tensors="pt", padding=True)
+
+    input_ids1 = encoded1["input_ids"]
+    attention_mask1 = encoded1["attention_mask"]
+    input_ids2 = encoded2["input_ids"]
+    attention_mask2 = encoded2["attention_mask"]
+
+    def _hidden_state(output):
+        return output.last_hidden_state if hasattr(output, "last_hidden_state") else output[0]
 
     with torch.no_grad():
-        original_output1 = model1.get_input_embeddings()(input_ids1)
-        original_output2 = model2.get_input_embeddings()(input_ids2)
+        original_output1 = _hidden_state(
+            model1(input_ids=input_ids1, attention_mask=attention_mask1)
+        )
+        original_output2 = _hidden_state(
+            model2(input_ids=input_ids2, attention_mask=attention_mask2)
+        )
 
     tokens1 = [tokenizer1.convert_ids_to_tokens(seq.tolist()) for seq in input_ids1]
     tokens2 = [tokenizer2.convert_ids_to_tokens(seq.tolist()) for seq in input_ids2]
@@ -122,12 +134,16 @@ def test_model_outputs_preserved_after_embedding_alignment() -> None:
             mapped.append([merged_vocab[token] for token in seq])
         return torch.tensor(mapped, dtype=torch.long)
 
-    new_input_ids1 = tokens_to_ids(tokens1)
-    new_input_ids2 = tokens_to_ids(tokens2)
+    new_input_ids1 = tokens_to_ids(tokens1).to(input_ids1.device)
+    new_input_ids2 = tokens_to_ids(tokens2).to(input_ids2.device)
 
     with torch.no_grad():
-        new_output1 = aligned_model1.get_input_embeddings()(new_input_ids1)
-        new_output2 = aligned_model2.get_input_embeddings()(new_input_ids2)
+        new_output1 = _hidden_state(
+            aligned_model1(input_ids=new_input_ids1, attention_mask=attention_mask1)
+        )
+        new_output2 = _hidden_state(
+            aligned_model2(input_ids=new_input_ids2, attention_mask=attention_mask2)
+        )
 
     torch.testing.assert_close(new_output1, original_output1, rtol=1e-4, atol=1e-4)
     torch.testing.assert_close(new_output2, original_output2, rtol=1e-4, atol=1e-4)
