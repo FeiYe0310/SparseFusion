@@ -9,7 +9,7 @@ from tqdm import tqdm
 import torch
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from datasets import load_dataset
+from datasets import load_from_disk
 from typing import Callable
 import os
 
@@ -262,14 +262,14 @@ def run_natural_niches(
         print("Loading and preprocessing GSM8K dataset from local directory...")
         # Let main process prepare the dataset. It will be cached for others.
         # Path is now imported from the global config file.
-        load_dataset(GSM8K_DIR)
+        load_from_disk(GSM8K_DIR)
 
     # Barrier to ensure all processes wait for rank 0 to finish caching.
     dist.barrier()
 
     # Now all processes can load from the cache without disk contention.
     # Path is now imported from the global config file.
-    dataset = load_dataset(GSM8K_DIR)
+    dataset = load_from_disk(GSM8K_DIR)
 
     def preprocess_function(examples):
         inputs = [q + " " + a for q, a in zip(examples["question"], examples["answer"])]
@@ -303,6 +303,18 @@ def run_natural_niches(
     model_skeleton = AutoModelForCausalLM.from_pretrained(
         model1_path, torch_dtype=torch.bfloat16
     )
+    vocab_size = len(tokenizer)
+    input_embeddings = model_skeleton.get_input_embeddings()
+    if input_embeddings is not None and input_embeddings.weight.shape[0] != vocab_size:
+        model_skeleton.resize_token_embeddings(vocab_size)
+        if hasattr(model_skeleton.config, "vocab_size"):
+            model_skeleton.config.vocab_size = vocab_size
+        tie_weights = getattr(model_skeleton, "tie_weights", None)
+        if callable(tie_weights):
+            try:
+                tie_weights()
+            except Exception:
+                pass
     model_skeleton.to(device)
 
     # --- DDP Initialization Fix for Gloo Backend ---
