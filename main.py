@@ -22,7 +22,14 @@ def parse_arguments():
         "--method",
         type=str,
         default="natural_niches",
-        choices=["natural_niches", "ga", "map_elites", "cma_es", "brute_force"],
+        choices=[
+            "natural_niches",
+            "natural_niches_sharded",
+            "ga",
+            "map_elites",
+            "cma_es",
+            "brute_force",
+        ],
     )
     parser.add_argument("--total_forward_passes", type=int, default=50000)
     # add model1_path and model2_path
@@ -63,8 +70,12 @@ def main():
         if args.no_matchmaker and not args.no_crossover:
             file_name += "_no_matchmaker"
         if args.debug_models:
-            args_dict["model1_path"] = "models/BERTOverflow"
-            args_dict["model2_path"] = "SparseFusion/models/BERTOverflow"
+            args_dict["model1_path"] = "models/MathBERT"
+            args_dict["model2_path"] = "models/BERTOverflow"
+
+        if args.debug_models:
+            args_dict["model1_path"] = "models/MathBERT"
+            args_dict["model2_path"] = "models/BERTOverflow"
 
         results = run_natural_niches(**args_dict)
     elif method == "ga":
@@ -76,6 +87,14 @@ def main():
         if args.no_splitpoint and not args.no_crossover:
             file_name += "_no_splitpoint"
         results = run_natural_niches(**args_dict, alpha=0.0)
+    elif method == "natural_niches_sharded":
+        from natural_niches_sharded import run_natural_niches_sharded
+
+        if args.debug_models:
+            args_dict["model1_path"] = "models/BERTOverflow"
+            args_dict["model2_path"] = "SparseFusion/models/BERTOverflow"
+
+        results = run_natural_niches_sharded(**args_dict)
     elif method == "brute_force":
         assert args.use_pre_trained, "Brute force requires pre-trained models"
         results = run_brute_force()

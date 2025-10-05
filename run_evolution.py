@@ -47,7 +47,7 @@ def main():
     parser.add_argument(
         "--pop_size",
         type=int,
-        default=6,
+        default=10,
         help="Number of individuals in the population.",
     )
     parser.add_argument(
@@ -57,16 +57,21 @@ def main():
         help="Total number of child model evaluations.",
     )
     parser.add_argument(
-        "--debug_models",
-        action="store_true",
-        help="Use lightweight BERTOverflow checkpoints for debugging.",
-    )
-    parser.add_argument(
         "--archive_backend",
         type=str,
         default="gpu",
         choices=["gpu", "cpu"],
         help="Where to store the evolution archive (gpu or cpu).",
+    )
+    parser.add_argument(
+        "--debug_models",
+        action="store_true",
+        help="Use lightweight BERTOverflow checkpoints for debugging.",
+    )
+    parser.add_argument(
+        "--use_sharded_archive",
+        action="store_true",
+        help="Run experimental sharded archive implementation.",
     )
 
     args = parser.parse_args()
@@ -92,14 +97,22 @@ def main():
         config["model2_path"] = "models/BERTOverflow"
 
     print("--- Starting Natural Niches Evolution for LLMs ---")
-    # Print configuration in a readable format
     print("Configuration:")
-    for key, value in config.items():
+    config_for_print = config.copy()
+    config_for_print["use_sharded_archive"] = args.use_sharded_archive
+    for key, value in config_for_print.items():
         print(f"  - {key}: {value}")
     print("--------------------------------------------------")
 
     # --- Run Evolution ---
-    results = run_natural_niches(**config)
+    if args.use_sharded_archive:
+        from natural_niches_sharded import run_natural_niches_sharded
+
+        sharded_kwargs = config.copy()
+        sharded_kwargs.pop("archive_backend", None)
+        results = run_natural_niches_sharded(**sharded_kwargs)
+    else:
+        results = run_natural_niches(**config)
 
     # --- Print Final Results ---
     print("\n--- Evolution Finished ---")
