@@ -29,6 +29,34 @@ from helper_fn import (
 from config import GSM8K_DIR, RESULTS_DIR
 
 
+def _init_distributed_if_needed(default_backend: str = "gloo") -> tuple[int, int]:
+    """Initialise torch.distributed, providing sane defaults for single-rank runs."""
+
+    if not dist.is_available():
+        raise RuntimeError("torch.distributed is not available in this build of PyTorch")
+
+    if dist.is_initialized():
+        return dist.get_rank(), dist.get_world_size()
+
+    # Provide defaults so that single-process runs do not crash when torchrun env vars are missing.
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
+    os.environ.setdefault("LOCAL_RANK", os.environ.get("RANK", "0"))
+
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+
+    dist.init_process_group(
+        backend=default_backend,
+        rank=rank,
+        world_size=world_size,
+    )
+
+    return rank, world_size
+
+
 def create_evaluation_fn_for_llm(
     model_skeleton: torch.nn.Module,
     param_shapes: list,
@@ -40,13 +68,14 @@ def create_evaluation_fn_for_llm(
     Creates an evaluation function for a given LLM.
     Handles unflattening and batched, distributed evaluation.
     """
-    device = model_skeleton.device
+    base_model = model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+    device = next(base_model.parameters()).device
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
         # Restore parameters into the raw model (not the DDP wrapper)
         # The DDP wrapper will automatically sync the updated weights.
         restored_model = jax_flattened_to_pytorch_model(
-            flat_params, model_skeleton.module, param_shapes
+            flat_params, base_model, param_shapes
         )
         restored_model.eval()
 
@@ -193,13 +222,16 @@ def run_natural_niches(
     )
 
     # --- Multi-GPU Distributed Setup ---
-    # torchrun will set these environment variables
-    # Switching to 'gloo' backend as a more stable alternative to 'nccl'
-    dist.init_process_group("gloo")
-    rank = dist.get_rank()
-    # Let torchrun handle device assignment via LOCAL_RANK environment variable
-    device = int(os.environ.get("LOCAL_RANK", 0))
-    torch.cuda.set_device(device)
+    # torchrun will set these environment variables; fall back to sane defaults otherwise.
+    rank, world_size = _init_distributed_if_needed("gloo")
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cpu")
+
     is_main_process = rank == 0
 
     # --- LLM & Data Loading ---
@@ -279,7 +311,10 @@ def run_natural_niches(
     model_skeleton.to(torch.float32)
 
     # Wrap the model for distributed evaluation.
-    model_skeleton = DDP(model_skeleton)
+    ddp_kwargs = {}
+    if device.type == "cuda":
+        ddp_kwargs.update(device_ids=[device.index], output_device=device.index)
+    model_skeleton = DDP(model_skeleton, **ddp_kwargs)
 
     # Cast back to bfloat16 for efficient computation.
     model_skeleton.to(torch.bfloat16)

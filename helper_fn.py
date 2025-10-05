@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import torch
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
-from typing import List, Tuple, Any, Union
+from typing import List, Tuple, Any, Union, Literal
 from tqdm.auto import tqdm
 
 
@@ -200,7 +200,7 @@ def _remap_embeddings_to_vocab(
         updated_embedding = model.get_input_embeddings()
         updated_embedding.weight.zero_()
         for token, original_idx in tqdm(
-            original_vocab.items(),
+            sorted(original_vocab.items(), key=lambda item: item[1]),
             desc="Remapping embeddings",
             total=len(original_vocab),
         ):
@@ -210,40 +210,39 @@ def _remap_embeddings_to_vocab(
 
 
 def merge_tokenizers_and_align_models(
-    model1: torch.nn.Module,
-    tokenizer1,
-    model2: torch.nn.Module,
-    tokenizer2,
+    base_model: torch.nn.Module,
+    base_tokenizer,
+    other_model: torch.nn.Module,
+    other_tokenizer,
 ):
-    """Merge two tokenizers and align model embeddings to the merged vocabulary."""
-    vocab1 = tokenizer1.get_vocab()
-    vocab2 = tokenizer2.get_vocab()
+    """Extend the base tokenizer with tokens from the other and align both models."""
+    base_vocab = base_tokenizer.get_vocab()
+    other_vocab = other_tokenizer.get_vocab()
 
-    if vocab1 == vocab2:
-        return tokenizer1, model1, model2
+    if base_vocab == other_vocab:
+        return base_tokenizer, base_model, other_model
 
     tokens_to_add = [
         token
-        for token, _ in sorted(vocab2.items(), key=lambda item: item[1])
-        if token not in vocab1
+        for token, _ in sorted(other_vocab.items(), key=lambda item: item[1])
+        if token not in base_vocab
     ]
 
     if tokens_to_add:
-        tokenizer1.add_tokens(tokens_to_add)
-        vocab1 = tokenizer1.get_vocab()
+        base_tokenizer.add_tokens(tokens_to_add)
+        base_vocab = base_tokenizer.get_vocab()
 
-    merged_vocab = vocab1
+    merged_vocab = base_vocab
     merged_vocab_size = len(merged_vocab)
 
-    _extend_embeddings_with_zeros(model1, merged_vocab_size)
-    _remap_embeddings_to_vocab(model2, vocab2, merged_vocab)
+    _extend_embeddings_with_zeros(base_model, merged_vocab_size)
+    _remap_embeddings_to_vocab(other_model, other_vocab, merged_vocab)
 
-    if hasattr(model1.config, "vocab_size"):
-        model1.config.vocab_size = merged_vocab_size
-    if hasattr(model2.config, "vocab_size"):
-        model2.config.vocab_size = merged_vocab_size
+    for model in (base_model, other_model):
+        if hasattr(model.config, "vocab_size"):
+            model.config.vocab_size = merged_vocab_size
 
-    for model in (model1, model2):
+    for model in (base_model, other_model):
         tie_weights = getattr(model, "tie_weights", None)
         if callable(tie_weights):
             try:
@@ -251,7 +250,7 @@ def merge_tokenizers_and_align_models(
             except Exception:
                 pass
 
-    return tokenizer1, model1, model2
+    return base_tokenizer, base_model, other_model
 
 
 def _load_model(model_path: str, dtype: torch.dtype) -> torch.nn.Module:
@@ -265,15 +264,16 @@ def get_pre_trained_models(
     model1_path: str,
     model2_path: str,
     *,
+    base_tokenizer: Literal["model1", "model2"] = "model1",
     return_tokenizer: bool = False,
 ) -> Union[
     Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]]],
     Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]], Any],
 ]:
     """
-    Loads two pre-trained models, merges their tokenizers (extending the first with the
-    second), aligns the embedding weights to the merged vocabulary, then pads the
-    smaller parameter vector and returns both flattened models plus shape metadata.
+    Loads two pre-trained models, merges their tokenizers (extending the selected base
+    with the other's vocabulary), aligns the embedding weights to the merged vocabulary,
+    and returns their flattened parameter vectors plus shape metadata.
     """
     # For 7B models, it's recommended to use bfloat16 to save memory
     dtype = torch.bfloat16
@@ -291,13 +291,33 @@ def get_pre_trained_models(
     tokenizer1 = AutoTokenizer.from_pretrained(model1_path)
     tokenizer2 = AutoTokenizer.from_pretrained(model2_path)
 
-    tokenizer1, model1, model2 = merge_tokenizers_and_align_models(
-        model1, tokenizer1, model2, tokenizer2
-    )
+    base_choice = base_tokenizer.lower()
+    if base_choice not in {"model1", "model2"}:
+        raise ValueError("base_tokenizer must be 'model1' or 'model2'")
+
+    if base_choice == "model1":
+        merged_tokenizer, model1, model2 = merge_tokenizers_and_align_models(
+            model1, tokenizer1, model2, tokenizer2
+        )
+    else:
+        merged_tokenizer, model2, model1 = merge_tokenizers_and_align_models(
+            model2, tokenizer2, model1, tokenizer1
+        )
+
+    tokenizer_shared = merged_tokenizer
 
     print("Flattening parameters of both models...")
     flat_params1, param_shapes1, total_params1 = pytorch_to_jax_flattened(model1)
     flat_params2, param_shapes2, total_params2 = pytorch_to_jax_flattened(model2)
+
+    if total_params1 != total_params2:
+        raise ValueError(
+            "Model parameter counts differ after tokenizer merge; review architectures before flattening."
+        )
+    if len(param_shapes1) != len(param_shapes2):
+        raise ValueError(
+            "Parameter shape lists differ after tokenizer merge; ensure models share architecture."
+        )
 
     # --- Memory Optimization ---
     del model1
@@ -306,29 +326,8 @@ def get_pre_trained_models(
         torch.cuda.empty_cache()
     print("Cleaned up initial PyTorch models from memory.")
 
-    # --- Padding Logic ---
-    if total_params1 > total_params2:
-        print(
-            f"Model 1 ({total_params1} params) is larger than Model 2 ({total_params2} params). Padding Model 2."
-        )
-    elif total_params2 > total_params1:
-        print(
-            f"Model 2 ({total_params2} params) is larger than Model 1 ({total_params1} params). Padding Model 1."
-        )
-    else:
-        print("Both models have the same number of parameters. No padding needed.")
-
-    flat_params1, flat_params2, final_param_shapes = pad_flattened_params(
-        flat_params1,
-        total_params1,
-        param_shapes1,
-        flat_params2,
-        total_params2,
-        param_shapes2,
-    )
-
-    print("Model loading, flattening, and padding complete.")
+    print("Model loading and flattening complete.")
 
     if return_tokenizer:
-        return flat_params1, flat_params2, final_param_shapes, tokenizer1
-    return flat_params1, flat_params2, final_param_shapes
+        return flat_params1, flat_params2, param_shapes1, tokenizer_shared
+    return flat_params1, flat_params2, param_shapes1
