@@ -162,7 +162,9 @@ def crossover(
 
 @jax.jit
 def mutate(params: jnp.ndarray, rand_key: jnp.ndarray, std: float = 0.01):
-    noise = jax.random.normal(rand_key, shape=params.shape) * std
+    dtype = params.dtype
+    std_scalar = jnp.asarray(std, dtype=dtype)
+    noise = jax.random.normal(rand_key, shape=params.shape, dtype=dtype) * std_scalar
     return params + noise
 
 

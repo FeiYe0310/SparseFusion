@@ -47,7 +47,7 @@ def main():
     parser.add_argument(
         "--pop_size",
         type=int,
-        default=10,
+        default=16,
         help="Number of individuals in the population.",
     )
     parser.add_argument(

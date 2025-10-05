@@ -1,13 +1,23 @@
+import math
+import os
+from collections import defaultdict
+from contextlib import nullcontext
+from typing import Callable, Optional
+
 import jax
 import jax.numpy as jnp
-from collections import defaultdict
-from tqdm import tqdm
+import numpy as np
 import torch
 import torch.distributed as dist
-import numpy as np
 from datasets import load_from_disk
-from typing import Callable
-import os
+from torch.utils import dlpack as torch_dlpack
+from tqdm import tqdm
+
+jax.config.update("jax_enable_x64", True)
+
+from jax import dlpack as jax_dlpack
+from jax.experimental.pjit import pjit
+from jax.sharding import NamedSharding, PartitionSpec
 
 from helper_fn import (
     crossover,
@@ -24,6 +34,7 @@ from sharded_archive import (
     initialize_state,
     sample_parents as sharded_sample_parents,
     update_state as sharded_update_state,
+    with_mesh,
 )
 
 
@@ -145,116 +156,288 @@ def run_natural_niches_sharded(
         num_datapoints=len(tokenized_train_dataset),
     )
 
-    state = initialize_state(config)
-
-    if is_main_process:
-        for model in (model_1, model_2):
-            score = train_eval_fn(model)
-            state = sharded_update_state(state, score, model, alpha)
-
-    if dist_enabled and dist.is_initialized():
-        dist.barrier()
-
     results = []
 
-    for run in range(runs):
+    axis_name = config.axis_name
+    state: Optional[ShardedArchiveState] = None
+    generate_child_cpu = None
+    sample_parent_indices_cpu = None
+    update_state_pjit = None
+    replicated_sharding = None
+
+    cpu_devices = jax.devices("cpu")
+    if not cpu_devices:
+        raise RuntimeError("No CPU device available for host-resident archive.")
+    cpu_device = cpu_devices[0]
+    state = None
+    update_state_pjit = None
+    replicated_sharding = None
+
+    mesh_ctx = nullcontext()
+    mesh_devices = None
+    mesh = None
+    mesh_axis_size = 1
+    if is_main_process:
+        available_devices = jax.devices()
+        if not available_devices:
+            raise RuntimeError("No JAX devices available for sharded execution.")
+
+        mesh_axis_size = min(len(available_devices), pop_size)
+        if mesh_axis_size == 0:
+            mesh_axis_size = 1
+
+        if pop_size % mesh_axis_size != 0:
+            mesh_axis_size = math.gcd(pop_size, mesh_axis_size)
+
+        if mesh_axis_size == 0:
+            mesh_axis_size = 1
+
+        if pop_size % mesh_axis_size != 0:
+            raise ValueError(
+                "Population size must be divisible by the mesh axis size for sharded execution."
+            )
+
+        mesh_devices = np.array(available_devices[:mesh_axis_size])
+        mesh_ctx = with_mesh(mesh_devices, axis_name=axis_name)
+
+    with mesh_ctx as mesh:
+        mesh_axis_size = mesh.devices.size if mesh is not None else 1
         if is_main_process:
-            print(f"--- Starting Run {run+1}/{runs} ---")
-            results.append(defaultdict(list))
+            replicated_sharding = NamedSharding(mesh, PartitionSpec()) if mesh else None
 
-        seed = 42 + run
-        key = jax.random.PRNGKey(seed)
+            state = initialize_state(config, device=cpu_device)
 
-        progress_bar = tqdm(
-            range(total_forward_passes),
-            desc="Forward passes",
-            disable=not is_main_process,
-        )
-        for i in progress_bar:
-            k1, k2, k3, key = jax.random.split(key, 4)
+            def _fetch_archive_row(idx: int) -> jax.Array:
+                return jax.device_put(state.archive[idx], cpu_device)
 
-            if is_main_process:
-                parents_bf16 = sharded_sample_parents(
-                    state, k1, alpha, use_matchmaker
+            def _sample_parent_indices(
+                scores,
+                key_sample,
+                alpha_value,
+                matchmaker_flag,
+            ):
+                scores = jnp.asarray(scores, dtype=jnp.float32)
+                alpha_array = jnp.asarray(alpha_value, dtype=jnp.float32)
+                k_first, k_second = jax.random.split(key_sample)
+
+                z = scores.sum(axis=0)
+                z = jnp.where(z, z, 1)
+                z = z ** alpha_array
+                fitness_matrix = scores / z[None, :]
+                fitness = jnp.sum(fitness_matrix, axis=1)
+                total_fitness = jnp.sum(fitness)
+                total_fitness = jnp.where(total_fitness == 0, 1.0, total_fitness)
+                probs = fitness / total_fitness
+                probs = jnp.where(jnp.isnan(probs), 0.0, probs)
+
+                parent_1_idx = jax.random.choice(
+                    k_first, probs.shape[0], shape=(), p=probs
                 )
-                parents_f32 = (
-                    parents_bf16[0].astype(jnp.float32),
-                    parents_bf16[1].astype(jnp.float32),
-                )
 
-                if use_crossover:
-                    if use_splitpoint:
-                        child_f32 = crossover(parents_f32, k2)
-                    else:
-                        child_f32 = crossover_without_splitpoint(parents_f32, k2)
-                else:
-                    child_f32 = parents_f32[0]
-
-                child_f32 = mutate(child_f32, k3)
-                child_bf16_main = child_f32.astype(jnp.bfloat16)
-            else:
-                child_bf16_main = None
-
-            if dist_enabled and dist.is_initialized():
-                if is_main_process:
-                    child_tensor = torch.from_numpy(
-                        np.array(child_bf16_main.astype(jnp.float32))
+                if matchmaker_flag:
+                    match_score = jnp.maximum(
+                        0, fitness_matrix - fitness_matrix[parent_1_idx, :]
+                    ).sum(axis=1)
+                    match_total = jnp.sum(match_score)
+                    match_total = jnp.where(match_total == 0, 1.0, match_total)
+                    match_probs = match_score / match_total
+                    match_probs = jnp.where(jnp.isnan(match_probs), 0.0, match_probs)
+                    parent_2_idx = jax.random.choice(
+                        k_second, match_probs.shape[0], shape=(), p=match_probs
                     )
                 else:
-                    child_tensor = torch.empty(num_params_llm, dtype=torch.float32)
-
-                dist.broadcast(child_tensor, src=0)
-                child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
-            else:
-                child_bf16 = child_bf16_main
-
-            score = train_eval_fn(child_bf16)
-
-            if is_main_process:
-                state = sharded_update_state(state, score, child_bf16, alpha)
-
-            if dist_enabled and dist.is_initialized():
-                dist.barrier()
-
-            if (i + 1) % 10 == 0:
-                if is_main_process:
-                    print(
-                        f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
+                    pair = jax.random.choice(
+                        k_second, probs.shape[0], shape=(2,), p=probs
                     )
+                    parent_2_idx = pair[0]
+                    parent_1_idx = pair[1]
 
-                for j in range(pop_size):
-                    if is_main_process:
-                        individual_params = state.archive[j]
-                        params_tensor = torch.from_numpy(
-                            np.array(individual_params.astype(jnp.float32))
-                        )
+                return (
+                    jnp.asarray(parent_1_idx, dtype=jnp.int32),
+                    jnp.asarray(parent_2_idx, dtype=jnp.int32),
+                )
+
+            sample_parent_indices_cpu = jax.jit(
+                _sample_parent_indices,
+                backend="cpu",
+                static_argnums=(3,),
+            )
+
+            def _generate_child_from_parents(
+                parent_1,
+                parent_2,
+                key_crossover,
+                key_mutate,
+                crossover_flag,
+                splitpoint_flag,
+            ):
+                parent_1 = jnp.asarray(parent_1, dtype=jnp.bfloat16)
+                parent_2 = jnp.asarray(parent_2, dtype=jnp.bfloat16)
+                parents = (parent_1, parent_2)
+                child = parents[0]
+                if crossover_flag:
+                    if splitpoint_flag:
+                        child = crossover(parents, key_crossover)
                     else:
-                        params_tensor = torch.empty(num_params_llm, dtype=torch.float32)
-
-                    if dist_enabled and dist.is_initialized():
-                        dist.broadcast(params_tensor, src=0)
-                        params_bf16 = jnp.array(params_tensor.numpy()).astype(
-                            jnp.bfloat16
+                        child = crossover_without_splitpoint(
+                            parents, key_crossover
                         )
-                    else:
-                        params_bf16 = state.archive[j]
 
-                    test_scores_vector = test_eval_fn(params_bf16)
+                child = mutate(child, key_mutate)
+                return child.astype(jnp.bfloat16)
 
-                    if is_main_process:
-                        acc = jnp.mean(test_scores_vector)
-                        print(
-                            f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
-                        )
+            generate_child_cpu = jax.jit(
+                _generate_child_from_parents,
+                backend="cpu",
+                static_argnums=(4, 5),
+            )
+
+            alpha_scalar = float(alpha)
+            for model in (model_1, model_2):
+                score_vector = train_eval_fn(model)
+                score_vector = jnp.asarray(score_vector, dtype=jnp.float32)
+                state = sharded_update_state(
+                    state,
+                    score_vector,
+                    model,
+                    alpha_scalar,
+                )
+        else:
+            if dist_enabled and dist.is_initialized():
+                for model in (model_1, model_2):
+                    train_eval_fn(model)
 
         if dist_enabled and dist.is_initialized():
             dist.barrier()
 
-    if is_main_process:
-        if runs > 0:
+        alpha_scalar = float(alpha)
+
+        for run in range(runs):
+            if is_main_process:
+                print(f"--- Starting Run {run+1}/{runs} ---")
+                results.append(defaultdict(list))
+
+            seed = 42 + run
+            key = jax.random.PRNGKey(seed)
+
+            progress_bar = tqdm(
+                range(total_forward_passes),
+                desc="Forward passes",
+                disable=not is_main_process,
+            )
+            for i in progress_bar:
+                k1, k2, k3, key = jax.random.split(key, 4)
+
+                if is_main_process:
+                    scores_cpu = np.asarray(state.scores, dtype=np.float32)
+                    parent_indices = sample_parent_indices_cpu(
+                        scores_cpu,
+                        k1,
+                        alpha_scalar,
+                        use_matchmaker,
+                    )
+                    parent_1_idx = int(parent_indices[0])
+                    parent_2_idx = int(parent_indices[1])
+
+                    parent_1_cpu = np.asarray(
+                        _fetch_archive_row(parent_1_idx), dtype=np.dtype("bfloat16")
+                    )
+                    parent_2_cpu = np.asarray(
+                        _fetch_archive_row(parent_2_idx), dtype=np.dtype("bfloat16")
+                    )
+
+                    child_cpu = generate_child_cpu(
+                        parent_1_cpu,
+                        parent_2_cpu,
+                        k2,
+                        k3,
+                        use_crossover,
+                        use_splitpoint,
+                    )
+                    child_bf16_main = jax.device_put(child_cpu)
+                else:
+                    child_bf16_main = None
+
+                if dist_enabled and dist.is_initialized():
+                    if is_main_process:
+                        child_tensor = torch_dlpack.from_dlpack(
+                            jax_dlpack.to_dlpack(child_bf16_main)
+                        ).to(device)
+                    else:
+                        child_tensor = torch.empty(
+                            num_params_llm,
+                            dtype=torch.bfloat16,
+                            device=device,
+                        )
+
+                    dist.broadcast(child_tensor, src=0)
+                    child_bf16 = jax_dlpack.from_dlpack(
+                        torch_dlpack.to_dlpack(child_tensor)
+                    )
+                    if is_main_process:
+                        child_bf16_main = child_bf16
+                else:
+                    child_bf16 = child_bf16_main
+
+                score = train_eval_fn(child_bf16)
+
+                if is_main_process:
+                    score_array = jnp.asarray(score, dtype=jnp.float32)
+                    score_cpu = jax.device_put(score_array, cpu_device)
+                    child_cpu = jax.device_put(child_bf16_main, cpu_device)
+                    state = sharded_update_state(
+                        state,
+                        score_cpu,
+                        child_cpu,
+                        alpha_scalar,
+                    )
+
+                if dist_enabled and dist.is_initialized():
+                    dist.barrier()
+
+                if (i + 1) % 10 == 0:
+                    if is_main_process:
+                        print(
+                            f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
+                        )
+
+                    for j in range(pop_size):
+                        if dist_enabled and dist.is_initialized():
+                            if is_main_process:
+                                params_bf16 = _fetch_archive_row(j)
+                                params_tensor = torch_dlpack.from_dlpack(
+                                    jax_dlpack.to_dlpack(params_bf16)
+                                ).to(device)
+                            else:
+                                params_tensor = torch.empty(
+                                    num_params_llm,
+                                    dtype=torch.bfloat16,
+                                    device=device,
+                                )
+
+                            dist.broadcast(params_tensor, src=0)
+                            params_bf16 = jax_dlpack.from_dlpack(
+                                torch_dlpack.to_dlpack(params_tensor)
+                            )
+                        else:
+                            params_bf16 = _fetch_archive_row(j)
+
+                        test_scores_vector = test_eval_fn(params_bf16)
+
+                        if is_main_process:
+                            acc = jnp.mean(test_scores_vector)
+                            print(
+                                f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
+                            )
+
+        if dist_enabled and dist.is_initialized():
+            dist.barrier()
+
+        if is_main_process and runs > 0 and state is not None:
             train_fitness = state.scores.mean(axis=1)
-            best_individual_idx = jnp.argmax(train_fitness)
-            best_params = state.archive[best_individual_idx]
+            best_individual_idx = int(jnp.argmax(train_fitness))
+            best_params = _fetch_archive_row(best_individual_idx)
+            best_params_host = jax.device_get(best_params)
 
             os.makedirs(RESULTS_DIR, exist_ok=True)
             from datetime import datetime
@@ -265,7 +448,7 @@ def run_natural_niches_sharded(
             )
 
             print(f"\n🏆 Saving the best model from the last run to: {save_path}")
-            jnp.savez(save_path, params=best_params)
+            jnp.savez(save_path, params=best_params_host)
             print("✅ Model saved successfully.")
 
     return results

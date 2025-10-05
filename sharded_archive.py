@@ -18,6 +18,7 @@ from typing import Tuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,11 @@ class ShardedArchiveState:
     scores: jax.Array
 
 
-def initialize_state(config: ShardedArchiveConfig) -> ShardedArchiveState:
+def initialize_state(
+    config: ShardedArchiveConfig,
+    *,
+    device: jax.Device | None = None,
+) -> ShardedArchiveState:
     """Allocate the archive / score buffers with a population-axis sharding.
 
     This currently returns device-local zeros using `jnp.zeros`; the caller can
@@ -50,8 +55,16 @@ def initialize_state(config: ShardedArchiveConfig) -> ShardedArchiveState:
     num_params = config.num_params
     num_datapoints = config.num_datapoints
 
-    archive = jnp.zeros((pop, num_params), dtype=jnp.bfloat16)
-    scores = jnp.zeros((pop, num_datapoints), dtype=jnp.float32)
+    if device is not None and device.platform == "cpu":
+        archive = np.zeros((pop, num_params), dtype=np.dtype("bfloat16"))
+        scores = np.zeros((pop, num_datapoints), dtype=np.float32)
+    elif device is not None:
+        with jax.default_device(device):
+            archive = jnp.zeros((pop, num_params), dtype=jnp.bfloat16)
+            scores = jnp.zeros((pop, num_datapoints), dtype=jnp.float32)
+    else:
+        archive = jnp.zeros((pop, num_params), dtype=jnp.bfloat16)
+        scores = jnp.zeros((pop, num_datapoints), dtype=jnp.float32)
     return ShardedArchiveState(archive=archive, scores=scores)
 
 
@@ -81,8 +94,7 @@ def sample_parents(
     if probs.size == 0:
         raise ValueError("Archive is empty; cannot sample parents.")
 
-    if jnp.any(jnp.isnan(probs)):
-        raise ValueError("Encountered NaNs while sampling parents.")
+    probs = jnp.where(jnp.isnan(probs), 0.0, probs)
 
     if use_matchmaker:
         parent_1_idx = jax.random.choice(k1, probs.size, shape=(1,), p=probs)[0]
@@ -101,22 +113,48 @@ def update_state(
     new_params: jax.Array,
     alpha: float,
 ) -> ShardedArchiveState:
-    """Placeholder for a sharded archive update.
+    """Update the sharded archive while keeping peak workspace small.
 
-    In the eventual version this would:
-      * compute fitness locally,
-      * participate in a global reduction to find the worst slot,
-      * apply the update only on the owning shard.
+    Instead of materialising an extra `(pop + 1, num_datapoints)` array we stream the
+    fitness computation via matrix-vector products.  This keeps the temporary buffers to
+    a handful of vectors (~megabytes) even for billion-parameter models.
     """
 
     archive = state.archive
     scores = state.scores
 
-    ext_scores = jnp.concatenate([scores, new_scores[None, ...]], axis=0)
-    z = jnp.sum(ext_scores, axis=0) ** alpha
-    z = jnp.where(z, z, 1)
-    ext_scores /= z[None, :]
-    fitness = jnp.sum(ext_scores, axis=1)
+    if isinstance(archive, np.ndarray):
+        new_scores_np = np.asarray(new_scores, dtype=np.float32)
+        new_params_np = np.asarray(new_params, dtype=np.dtype("bfloat16"))
+
+        column_totals = scores.sum(axis=0) + new_scores_np
+        safe_totals = np.where(column_totals == 0, 1.0, column_totals)
+        column_scale = np.power(safe_totals, alpha)
+        column_scale = np.where(column_scale == 0, 1.0, column_scale)
+        inv_scale = 1.0 / column_scale
+
+        existing_fitness = scores @ inv_scale
+        candidate_fitness = np.dot(new_scores_np, inv_scale)
+        fitness = np.concatenate([existing_fitness, np.array([candidate_fitness])])
+
+        worst_ix = int(np.argmin(fitness))
+        if worst_ix < scores.shape[0]:
+            archive[worst_ix, :] = new_params_np
+            scores[worst_ix, :] = new_scores_np
+
+        return ShardedArchiveState(archive=archive, scores=scores)
+
+    # Column-wise totals with the new candidate included for JAX arrays.
+    column_totals = jnp.sum(scores, axis=0) + new_scores
+    safe_totals = jnp.where(column_totals == 0, 1.0, column_totals)
+    column_scale = jnp.power(safe_totals, alpha)
+    column_scale = jnp.where(column_scale == 0, 1.0, column_scale)
+
+    inv_scale = 1.0 / column_scale
+
+    existing_fitness = scores @ inv_scale
+    candidate_fitness = jnp.dot(new_scores, inv_scale)
+    fitness = jnp.concatenate([existing_fitness, candidate_fitness[None]])
 
     worst_ix = jnp.asarray(jnp.argmin(fitness), dtype=jnp.int32)
     scores_len = jnp.asarray(scores.shape[0], dtype=jnp.int32)
@@ -135,7 +173,8 @@ def update_state(
 def with_mesh(mesh_devices, axis_name: str = "archive_devices"):
     """Context manager that yields a JAX mesh over the provided devices."""
 
-    mesh = jax.sharding.Mesh(jnp.array(mesh_devices), (axis_name,))
+    device_array = np.asarray(mesh_devices, dtype=object)
+    mesh = jax.sharding.Mesh(device_array, (axis_name,))
     with mesh:
         yield mesh
 
