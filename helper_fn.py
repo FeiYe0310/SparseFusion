@@ -260,20 +260,17 @@ def _load_model(model_path: str, dtype: torch.dtype) -> torch.nn.Module:
         return AutoModel.from_pretrained(model_path, torch_dtype=dtype)
 
 
-def get_pre_trained_models(
+def get_pre_trained_models_and_skeleton(
     model1_path: str,
     model2_path: str,
     *,
     base_tokenizer: Literal["model1", "model2"] = "model1",
-    return_tokenizer: bool = False,
-) -> Union[
-    Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]]],
-    Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]], Any],
-]:
+) -> Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]], Any, torch.nn.Module]:
     """
     Loads two pre-trained models, merges their tokenizers (extending the selected base
     with the other's vocabulary), aligns the embedding weights to the merged vocabulary,
-    and returns their flattened parameter vectors plus shape metadata.
+    and returns their flattened parameter vectors plus shape metadata. Additionally
+    returns a PyTorch model skeleton whose architecture matches the merged tokenizer.
     """
     # For 7B models, it's recommended to use bfloat16 to save memory
     dtype = torch.bfloat16
@@ -320,14 +317,47 @@ def get_pre_trained_models(
         )
 
     # --- Memory Optimization ---
-    del model1
     del model2
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    print("Cleaned up initial PyTorch models from memory.")
+    print("Freed secondary model from memory; retaining skeleton on CPU.")
+
+    model_skeleton = model1.to(torch.device("cpu"))
+    model_skeleton.eval()
 
     print("Model loading and flattening complete.")
 
+    return (
+        flat_params1,
+        flat_params2,
+        param_shapes1,
+        tokenizer_shared,
+        model_skeleton,
+    )
+
+
+def get_pre_trained_models(
+    model1_path: str,
+    model2_path: str,
+    *,
+    base_tokenizer: Literal["model1", "model2"] = "model1",
+    return_tokenizer: bool = False,
+) -> Union[
+    Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]]],
+    Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]], Any],
+]:
+    """Backward-compatible wrapper that omits the model skeleton from the return."""
+
+    results = get_pre_trained_models_and_skeleton(
+        model1_path,
+        model2_path,
+        base_tokenizer=base_tokenizer,
+        return_tokenizer=return_tokenizer,
+    )
+
     if return_tokenizer:
+        flat_params1, flat_params2, param_shapes1, tokenizer_shared, _ = results
         return flat_params1, flat_params2, param_shapes1, tokenizer_shared
+
+    flat_params1, flat_params2, param_shapes1, _ = results
     return flat_params1, flat_params2, param_shapes1

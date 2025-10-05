@@ -8,7 +8,7 @@ from collections import defaultdict
 from tqdm import tqdm
 import torch
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 from datasets import load_from_disk
 from typing import Callable
 import os
@@ -23,17 +23,19 @@ from helper_fn import (
     crossover,
     crossover_without_splitpoint,
     mutate,
-    get_pre_trained_models,
+    get_pre_trained_models_and_skeleton,
     jax_flattened_to_pytorch_model,
 )
 from config import GSM8K_DIR, RESULTS_DIR
 
 
-def _init_distributed_if_needed(default_backend: str = "gloo") -> tuple[int, int]:
-    """Initialise torch.distributed, providing sane defaults for single-rank runs."""
+def _init_distributed_if_needed() -> tuple[int, int]:
+    """Initialise torch.distributed with sensible defaults and backend selection."""
 
     if not dist.is_available():
-        raise RuntimeError("torch.distributed is not available in this build of PyTorch")
+        raise RuntimeError(
+            "torch.distributed is not available in this build of PyTorch"
+        )
 
     if dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()
@@ -48,8 +50,12 @@ def _init_distributed_if_needed(default_backend: str = "gloo") -> tuple[int, int
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
 
+    backend = os.environ.get("TORCH_BACKEND")
+    if not backend:
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+
     dist.init_process_group(
-        backend=default_backend,
+        backend=backend,
         rank=rank,
         world_size=world_size,
     )
@@ -68,7 +74,9 @@ def create_evaluation_fn_for_llm(
     Creates an evaluation function for a given LLM.
     Handles unflattening and batched, distributed evaluation.
     """
-    base_model = model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+    base_model = (
+        model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+    )
     device = next(base_model.parameters()).device
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
@@ -223,7 +231,7 @@ def run_natural_niches(
 
     # --- Multi-GPU Distributed Setup ---
     # torchrun will set these environment variables; fall back to sane defaults otherwise.
-    rank, world_size = _init_distributed_if_needed("gloo")
+    rank, world_size = _init_distributed_if_needed()
     local_rank = int(os.environ.get("LOCAL_RANK", rank))
 
     if torch.cuda.is_available():
@@ -239,19 +247,30 @@ def run_natural_niches(
         print("Loading tokenizer and models...")
     # Only the main process loads, flattens, and then broadcasts the initial models
     if is_main_process:
-        model_1, model_2, param_shapes, tokenizer = get_pre_trained_models(
+        (
+            model_1,
+            model_2,
+            param_shapes,
+            tokenizer,
+            model_skeleton,
+        ) = get_pre_trained_models_and_skeleton(
             model1_path,
             model2_path,
-            return_tokenizer=True,
         )
         # JAX arrays can be broadcast as a list of objects
-        initial_models_obj = [model_1, model_2, param_shapes, tokenizer]
+        initial_models_obj = [
+            model_1,
+            model_2,
+            param_shapes,
+            tokenizer,
+            model_skeleton,
+        ]
         dist.broadcast_object_list(initial_models_obj, src=0)
     else:
         # Other processes receive the broadcasted data
-        initial_models_obj = [None, None, None, None]
+        initial_models_obj = [None, None, None, None, None]
         dist.broadcast_object_list(initial_models_obj, src=0)
-        model_1, model_2, param_shapes, tokenizer = initial_models_obj
+        model_1, model_2, param_shapes, tokenizer, model_skeleton = initial_models_obj
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -293,28 +312,6 @@ def run_natural_niches(
     # --- Evaluation Setup ---
     if is_main_process:
         print("Setting up evaluation environment...")
-        # Let main process prepare the model. It will be cached for others.
-        AutoModelForCausalLM.from_pretrained(model1_path, torch_dtype=torch.bfloat16)
-
-    # Barrier to ensure all processes wait for rank 0 to finish caching.
-    dist.barrier()
-
-    # Now all processes can load from the cache without disk contention.
-    model_skeleton = AutoModelForCausalLM.from_pretrained(
-        model1_path, torch_dtype=torch.bfloat16
-    )
-    vocab_size = len(tokenizer)
-    input_embeddings = model_skeleton.get_input_embeddings()
-    if input_embeddings is not None and input_embeddings.weight.shape[0] != vocab_size:
-        model_skeleton.resize_token_embeddings(vocab_size)
-        if hasattr(model_skeleton.config, "vocab_size"):
-            model_skeleton.config.vocab_size = vocab_size
-        tie_weights = getattr(model_skeleton, "tie_weights", None)
-        if callable(tie_weights):
-            try:
-                tie_weights()
-            except Exception:
-                pass
     model_skeleton.to(device)
 
     # --- DDP Initialization Fix for Gloo Backend ---
