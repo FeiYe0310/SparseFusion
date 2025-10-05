@@ -19,7 +19,7 @@ def pytorch_to_jax_flattened(
     param_shapes = []
     total_params = 0
     param_list = list(model.parameters())
-    for p in tqdm(param_list, desc="Flattening PyTorch parameters"):
+    for p in tqdm(param_list, desc="Flattening PyTorch parameters", disable=False):
         # Convert to float32 for numpy compatibility, then to numpy array
         param_np = p.detach().cpu().to(torch.float32).numpy()
         params.append(param_np.flatten())
@@ -54,9 +54,7 @@ def jax_flattened_to_pytorch_model(
                 "Model structure mismatch: The number of parameters in the skeleton model and the shape specification do not match."
             )
 
-        for i, (shape, dtype) in enumerate(
-            tqdm(param_shapes, desc="Restoring PyTorch parameters")
-        ):
+        for i, (shape, dtype) in enumerate(param_shapes):
             # Calculate the number of elements for the current parameter
             param_numel = np.prod(shape).item()
 

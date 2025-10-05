@@ -28,6 +28,23 @@ def parse_arguments():
     # add model1_path and model2_path
     parser.add_argument("--model1_path", type=str, default="models/wizardmath_7b")
     parser.add_argument("--model2_path", type=str, default="models/agentevol-7b")
+    parser.add_argument(
+        "--distributed",
+        action="store_true",
+        help="Enable multi-node distributed execution via torch.distributed",
+    )
+    parser.add_argument(
+        "--archive_backend",
+        type=str,
+        default="gpu",
+        choices=["gpu", "cpu"],
+        help="Where to place the evolutionary archive (gpu or cpu).",
+    )
+    parser.add_argument(
+        "--debug_models",
+        action="store_true",
+        help="Use lightweight BERTOverflow checkpoints for debugging.",
+    )
 
     return parser.parse_args()
 
@@ -45,6 +62,10 @@ def main():
             file_name += "_no_splitpoint"
         if args.no_matchmaker and not args.no_crossover:
             file_name += "_no_matchmaker"
+        if args.debug_models:
+            args_dict["model1_path"] = "models/BERTOverflow"
+            args_dict["model2_path"] = "SparseFusion/models/BERTOverflow"
+
         results = run_natural_niches(**args_dict)
     elif method == "ga":
         if not args.no_matchmaker:

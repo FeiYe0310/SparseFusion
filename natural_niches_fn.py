@@ -12,6 +12,29 @@ from transformers import AutoTokenizer
 from datasets import load_from_disk
 from typing import Callable
 import os
+import math
+from contextlib import nullcontext
+
+try:
+    from jax.sharding import Mesh, NamedSharding, PartitionSpec
+    from jax import make_array_from_callback
+except ImportError:  # pragma: no cover - back-compat with older JAX
+    Mesh = None
+    NamedSharding = None
+    PartitionSpec = None
+    make_array_from_callback = None
+
+try:
+    default_device_ctx = jax.default_device
+except AttributeError:  # pragma: no cover - older JAX
+    from contextlib import contextmanager
+
+    def default_device_ctx(_device):
+        @contextmanager
+        def _noop():
+            yield
+
+        return _noop()
 
 # --- Imports for Multi-GPU ---
 import torch.distributed as dist
@@ -69,6 +92,9 @@ def create_evaluation_fn_for_llm(
     tokenized_dataset,
     tokenizer: AutoTokenizer,
     batch_size: int = 4,
+    distributed: bool = False,
+    world_size: int = 1,
+    rank: int = 0,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """
     Creates an evaluation function for a given LLM.
@@ -87,16 +113,21 @@ def create_evaluation_fn_for_llm(
         )
         restored_model.eval()
 
-        # Sampler ensures each GPU gets a different slice of data
-        sampler = DistributedSampler(
-            tokenized_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=dist.get_rank(),
-            shuffle=False,  # Keep order for consistent scoring
-        )
-        data_loader = DataLoader(
-            tokenized_dataset, batch_size=batch_size, sampler=sampler
-        )
+        # Sampler ensures each GPU gets a different slice of data when distributed
+        if distributed:
+            sampler = DistributedSampler(
+                tokenized_dataset,
+                num_replicas=world_size,
+                rank=rank,
+                shuffle=False,  # Keep order for consistent scoring
+            )
+            data_loader = DataLoader(
+                tokenized_dataset, batch_size=batch_size, sampler=sampler
+            )
+        else:
+            data_loader = DataLoader(
+                tokenized_dataset, batch_size=batch_size, shuffle=False
+            )
 
         local_scores = []
         with torch.no_grad():
@@ -121,26 +152,20 @@ def create_evaluation_fn_for_llm(
                 )
                 local_scores.append(accuracy_per_sequence.cpu())
 
-        # Each GPU now has a part of the results. We need to gather them all.
-        all_gpu_scores = [
-            torch.empty_like(local_scores[0]) for _ in range(dist.get_world_size())
-        ]
+        if not local_scores:
+            return jnp.zeros(len(tokenized_dataset))
 
-        # This part is tricky. Let's gather all results as objects.
-        gathered_objects = [None] * dist.get_world_size()
-
-        # We need to send a single tensor from each process.
+        # Gather results across processes when running distributed
         local_results_tensor = torch.cat(local_scores)
 
-        # Prepare a list to hold tensors from all processes
-        gathered_tensors = [
-            torch.empty_like(local_results_tensor) for _ in range(dist.get_world_size())
-        ]
-
-        dist.all_gather(gathered_tensors, local_results_tensor)
-
-        # Concatenate and trim padding added by the sampler
-        full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
+        if distributed:
+            gathered_tensors = [
+                torch.empty_like(local_results_tensor) for _ in range(world_size)
+            ]
+            dist.all_gather(gathered_tensors, local_results_tensor)
+            full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
+        else:
+            full_results_tensor = local_results_tensor[: len(tokenized_dataset)]
 
         return jnp.array(full_results_tensor.numpy())
 
@@ -176,7 +201,6 @@ def sample_parents(
     return archive[parent_1_idx], archive[parent_2_idx]
 
 
-@jax.jit
 def update_archive(
     score: jnp.ndarray,
     param: jnp.ndarray,
@@ -197,15 +221,15 @@ def update_archive(
     fitness = jnp.sum(ext_scores, axis=1)  # (pop_size + 1,)
 
     # get worst performing
-    worst_ix = jnp.argmin(fitness)
-    update_mask = worst_ix < scores.shape[0]
+    worst_ix = jnp.asarray(jnp.argmin(fitness), dtype=jnp.int32)
+    scores_len = jnp.asarray(scores.shape[0], dtype=jnp.int32)
+    update_mask = worst_ix < scores_len
 
-    scores = scores.at[worst_ix].set(
-        jax.lax.select(update_mask, score, scores[worst_ix])
-    )
-    archive = archive.at[worst_ix].set(
-        jax.lax.select(update_mask, param, archive[worst_ix])
-    )
+    row_selector = (jnp.arange(archive.shape[0], dtype=jnp.int32) == worst_ix) & update_mask
+    row_selector = row_selector[:, None]
+
+    archive = jnp.where(row_selector, param[None, :], archive)
+    scores = jnp.where(row_selector[: scores.shape[0], :], score[None, :], scores)
 
     return archive, scores
 
@@ -222,7 +246,13 @@ def run_natural_niches(
     use_pre_trained: bool = False,
     model1_path: str = "",
     model2_path: str = "",
+    distributed: bool = False,
+    archive_backend: str = "gpu",
 ) -> list:
+    archive_backend = archive_backend.lower()
+    if archive_backend not in {"gpu", "cpu"}:
+        raise ValueError("archive_backend must be 'gpu' or 'cpu'")
+
     use_matchmaker, use_crossover, use_splitpoint = (
         not no_matchmaker,
         not no_crossover,
@@ -231,8 +261,12 @@ def run_natural_niches(
 
     # --- Multi-GPU Distributed Setup ---
     # torchrun will set these environment variables; fall back to sane defaults otherwise.
-    rank, world_size = _init_distributed_if_needed()
-    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    if distributed:
+        rank, world_size = _init_distributed_if_needed()
+        local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    else:
+        rank, world_size = 0, 1
+        local_rank = 0
 
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
@@ -241,36 +275,22 @@ def run_natural_niches(
         device = torch.device("cpu")
 
     is_main_process = rank == 0
+    dist_enabled = distributed and world_size > 1
 
     # --- LLM & Data Loading ---
     if is_main_process:
         print("Loading tokenizer and models...")
-    # Only the main process loads, flattens, and then broadcasts the initial models
-    if is_main_process:
-        (
-            model_1,
-            model_2,
-            param_shapes,
-            tokenizer,
-            model_skeleton,
-        ) = get_pre_trained_models_and_skeleton(
-            model1_path,
-            model2_path,
-        )
-        # JAX arrays can be broadcast as a list of objects
-        initial_models_obj = [
-            model_1,
-            model_2,
-            param_shapes,
-            tokenizer,
-            model_skeleton,
-        ]
-        dist.broadcast_object_list(initial_models_obj, src=0)
-    else:
-        # Other processes receive the broadcasted data
-        initial_models_obj = [None, None, None, None, None]
-        dist.broadcast_object_list(initial_models_obj, src=0)
-        model_1, model_2, param_shapes, tokenizer, model_skeleton = initial_models_obj
+
+    (
+        model_1,
+        model_2,
+        param_shapes,
+        tokenizer,
+        model_skeleton,
+    ) = get_pre_trained_models_and_skeleton(
+        model1_path,
+        model2_path,
+    )
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -279,12 +299,13 @@ def run_natural_niches(
 
     if is_main_process:
         print("Loading and preprocessing GSM8K dataset from local directory...")
-        # Let main process prepare the dataset. It will be cached for others.
-        # Path is now imported from the global config file.
-        load_from_disk(GSM8K_DIR)
+        if dist_enabled:
+            # Let main process prepare the dataset. It will be cached for others.
+            # Path is now imported from the global config file.
+            load_from_disk(GSM8K_DIR)
 
-    # Barrier to ensure all processes wait for rank 0 to finish caching.
-    dist.barrier()
+    if dist_enabled:
+        dist.barrier()
 
     # Now all processes can load from the cache without disk contention.
     # Path is now imported from the global config file.
@@ -314,191 +335,307 @@ def run_natural_niches(
         print("Setting up evaluation environment...")
     model_skeleton.to(device)
 
-    # --- DDP Initialization Fix for Gloo Backend ---
-    # The 'gloo' backend does not support bfloat16 for broadcasting during DDP initialization.
-    # We temporarily cast the model to float32, initialize DDP, and then cast it back.
-    model_skeleton.to(torch.float32)
+    if dist_enabled:
+        # --- DDP Initialization Fix for Gloo Backend ---
+        # The 'gloo' backend does not support bfloat16 for broadcasting during DDP initialization.
+        # We temporarily cast the model to float32, initialize DDP, and then cast it back.
+        model_skeleton.to(torch.float32)
 
-    # Wrap the model for distributed evaluation.
-    ddp_kwargs = {}
-    if device.type == "cuda":
-        ddp_kwargs.update(device_ids=[device.index], output_device=device.index)
-    model_skeleton = DDP(model_skeleton, **ddp_kwargs)
+        # Wrap the model for distributed evaluation.
+        ddp_kwargs = {}
+        if device.type == "cuda":
+            ddp_kwargs.update(device_ids=[device.index], output_device=device.index)
+        model_skeleton = DDP(model_skeleton, **ddp_kwargs)
 
-    # Cast back to bfloat16 for efficient computation.
-    model_skeleton.to(torch.bfloat16)
+        # Cast back to bfloat16 for efficient computation.
+        model_skeleton.to(torch.bfloat16)
+    else:
+        model_skeleton.to(torch.bfloat16)
 
     model_skeleton.eval()
 
     train_eval_fn = create_evaluation_fn_for_llm(
-        model_skeleton, param_shapes, tokenized_train_dataset, tokenizer
+        model_skeleton,
+        param_shapes,
+        tokenized_train_dataset,
+        tokenizer,
+        distributed=dist_enabled,
+        world_size=world_size,
+        rank=rank,
     )
     test_eval_fn = create_evaluation_fn_for_llm(
-        model_skeleton, param_shapes, tokenized_test_dataset, tokenizer
+        model_skeleton,
+        param_shapes,
+        tokenized_test_dataset,
+        tokenizer,
+        distributed=dist_enabled,
+        world_size=world_size,
+        rank=rank,
     )
-    if is_main_process:
-        print("Setup complete. Starting evolution.")
 
-    results = []
-    # The main evolution loop runs on all processes, but JAX ensures results are identical
-    # since the random keys and inputs are synchronized.
-    # --- Major Refactor for Memory Optimization ---
-    # Only the main process will hold the memory-intensive JAX archive and perform
-    # the evolutionary operations. Other processes act as pure evaluators.
+    archive_sharding = None
+    scores_sharding = None
+    mesh_context = nullcontext()
+    cpu_archive_device = None
 
-    if is_main_process:
-        # --- Archive Initialization (Main Process Only) ---
-        print(f"--- Initializing Archive on Main Process (Rank {rank}) ---")
-        archive = jnp.zeros([pop_size, num_params_llm], dtype=jnp.bfloat16)
-        scores = jnp.zeros([pop_size, len(tokenized_train_dataset)], dtype=jnp.float32)
+    if archive_backend == "gpu" and Mesh and NamedSharding and PartitionSpec:
+        available_jax_devices = jax.devices()
+        if len(available_jax_devices) > 1 and pop_size > 1:
+            shard_axis_size = min(len(available_jax_devices), pop_size)
+            if pop_size % shard_axis_size != 0:
+                shard_axis_size = math.gcd(pop_size, shard_axis_size)
 
-        # Evaluate initial models to populate the archive
-        for model in (model_1, model_2):
-            # All processes participate in evaluation
-            score = train_eval_fn(model)
-            # But only main process updates its archive
-            archive, scores = update_archive(score, model, archive, scores, alpha)
-    else:
-        # Other processes participate in the initial evaluation but don't hold an archive
-        for model in (model_1, model_2):
-            train_eval_fn(model)
-        archive = None
-        scores = None
-
-    # Barrier to ensure rank 0 has finished initializing the archive
-    dist.barrier()
-
-    for run in range(runs):
-        if is_main_process:
-            print(f"--- Starting Run {run+1}/{runs} ---")
-
-        # This part of result handling only needs to be on the main process
-        if is_main_process:
-            results.append(defaultdict(list))
-
-        seed = 42 + run
-        # All processes must have the same random key sequence
-        key = jax.random.PRNGKey(seed)
-
-        progress_bar = tqdm(
-            range(total_forward_passes),
-            desc="Forward passes",
-            disable=not is_main_process,
-        )
-        for i in progress_bar:
-            # All processes advance their random state synchronously
-            k1, k2, k3, key = jax.random.split(key, 4)
-
-            # --- Child Generation (Main Process Only) ---
-            if is_main_process:
-                # 1. Main process does all the JAX work
-                parents_bf16 = sample_parents(
-                    archive, scores, k1, alpha, use_matchmaker
+            if shard_axis_size and shard_axis_size > 1:
+                shard_mesh = Mesh(
+                    np.array(available_jax_devices[:shard_axis_size]),
+                    ("archive_shard",),
                 )
-                parents_f32 = (
-                    parents_bf16[0].astype(jnp.float32),
-                    parents_bf16[1].astype(jnp.float32),
+                archive_sharding = NamedSharding(
+                    shard_mesh, PartitionSpec("archive_shard", None)
                 )
-
-                if use_crossover:
-                    if use_splitpoint:
-                        child_f32 = crossover(parents_f32, k2)
-                    else:
-                        child_f32 = crossover_without_splitpoint(parents_f32, k2)
-                else:
-                    child_f32 = parents_f32[0]
-
-                child_f32 = mutate(child_f32, k3)
-                child_bf16 = child_f32.astype(jnp.bfloat16)
-
-                # 2. Convert JAX array to a float32 torch tensor for broadcasting
-                child_tensor = torch.from_numpy(
-                    np.array(child_bf16.astype(jnp.float32))
+                scores_sharding = NamedSharding(
+                    shard_mesh, PartitionSpec("archive_shard", None)
                 )
-            else:
-                # Other processes prepare an empty float32 tensor to receive the data
-                child_tensor = torch.empty(num_params_llm, dtype=torch.float32)
-
-            # --- Broadcast Child to All Processes ---
-            dist.broadcast(child_tensor, src=0)
-
-            # All processes convert the received float32 tensor back to a bfloat16 JAX array
-            child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
-
-            # --- Evaluation (All Processes) ---
-            score = train_eval_fn(child_bf16)
-
-            # --- Archive Update (Main Process Only) ---
-            if is_main_process:
-                archive, scores = update_archive(
-                    score, child_bf16, archive, scores, alpha
-                )
-
-            # Barrier to ensure archive update is complete before the next iteration
-            dist.barrier()
-
-            # --- Periodic Full Archive Evaluation ---
-            # Every 10 forward passes, evaluate all models currently in the archive.
-            if (i + 1) % 10 == 0:
+                mesh_context = shard_mesh
                 if is_main_process:
                     print(
-                        f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
+                        f"Sharding archive across {shard_axis_size} JAX devices."
+                    )
+    elif archive_backend == "cpu":
+        cpu_devices = jax.devices("cpu")
+        if not cpu_devices:
+            raise RuntimeError("No CPU devices available for archive_backend='cpu'")
+        cpu_archive_device = cpu_devices[0]
+
+    with mesh_context:
+        if is_main_process:
+            print("Setup complete. Starting evolution.")
+
+        if archive_sharding is not None:
+            update_archive_fn = jax.jit(
+                update_archive,
+                in_shardings=(
+                    None,
+                    None,
+                    archive_sharding,
+                    scores_sharding,
+                    None,
+                ),
+                out_shardings=(archive_sharding, scores_sharding),
+            )
+        elif archive_backend == "cpu":
+            update_archive_fn = jax.jit(update_archive, backend="cpu")
+        else:
+            update_archive_fn = jax.jit(update_archive)
+
+        results = []
+        # The main evolution loop runs on all processes, but JAX ensures results are identical
+        # since the random keys and inputs are synchronized.
+        # --- Major Refactor for Memory Optimization ---
+        # Only the main process will hold the memory-intensive JAX archive and perform
+        # the evolutionary operations. Other processes act as pure evaluators.
+
+        if is_main_process:
+            # --- Archive Initialization (Main Process Only) ---
+            print(f"--- Initializing Archive on Main Process (Rank {rank}) ---")
+            archive_shape = (pop_size, num_params_llm)
+            scores_shape = (pop_size, len(tokenized_train_dataset))
+            if archive_sharding is not None:
+                archive = _sharded_zeros(archive_shape, jnp.bfloat16, archive_sharding)
+                scores = _sharded_zeros(scores_shape, jnp.float32, scores_sharding)
+            elif archive_backend == "cpu":
+                with default_device_ctx(cpu_archive_device):
+                    archive = jnp.zeros(archive_shape, dtype=jnp.bfloat16)
+                    scores = jnp.zeros(scores_shape, dtype=jnp.float32)
+            else:
+                archive = jnp.zeros(archive_shape, dtype=jnp.bfloat16)
+                scores = jnp.zeros(scores_shape, dtype=jnp.float32)
+
+            # Evaluate initial models to populate the archive
+            for model in (model_1, model_2):
+                # All processes participate in evaluation
+                score = train_eval_fn(model)
+                # But only main process updates its archive
+                archive, scores = update_archive_fn(
+                    score, model, archive, scores, alpha
+                )
+        else:
+            archive = None
+            scores = None
+            if dist_enabled:
+                # Other processes participate in the initial evaluation but don't hold an archive
+                for model in (model_1, model_2):
+                    train_eval_fn(model)
+
+        # Barrier to ensure rank 0 has finished initializing the archive
+        if dist_enabled:
+            dist.barrier()
+
+        for run in range(runs):
+            if is_main_process:
+                print(f"--- Starting Run {run+1}/{runs} ---")
+
+            # This part of result handling only needs to be on the main process
+            if is_main_process:
+                results.append(defaultdict(list))
+
+            seed = 42 + run
+            # All processes must have the same random key sequence
+            key = jax.random.PRNGKey(seed)
+
+            progress_bar = tqdm(
+                range(total_forward_passes),
+                desc="Forward passes",
+                disable=not is_main_process,
+            )
+            for i in progress_bar:
+                # All processes advance their random state synchronously
+                k1, k2, k3, key = jax.random.split(key, 4)
+
+                # --- Child Generation (Main Process Only) ---
+                if is_main_process:
+                    # 1. Main process does all the JAX work
+                    parents_bf16 = sample_parents(
+                        archive, scores, k1, alpha, use_matchmaker
+                    )
+                    parents_f32 = (
+                        parents_bf16[0].astype(jnp.float32),
+                        parents_bf16[1].astype(jnp.float32),
                     )
 
-                # This loop runs on all processes to keep them in sync for broadcasts.
-                for j in range(pop_size):
-                    # 1. Main process gets the individual parameters for broadcast.
+                    if use_crossover:
+                        if use_splitpoint:
+                            child_f32 = crossover(parents_f32, k2)
+                        else:
+                            child_f32 = crossover_without_splitpoint(parents_f32, k2)
+                    else:
+                        child_f32 = parents_f32[0]
+
+                    child_f32 = mutate(child_f32, k3)
+                    child_bf16_main = child_f32.astype(jnp.bfloat16)
+                else:
+                    child_bf16_main = None
+
+                if dist_enabled:
                     if is_main_process:
-                        individual_params = archive[j]
-                        params_tensor = torch.from_numpy(
-                            np.array(individual_params.astype(jnp.float32))
+                        # 2. Convert JAX array to a float32 torch tensor for broadcasting
+                        child_tensor = torch.from_numpy(
+                            np.array(child_bf16_main.astype(jnp.float32))
                         )
                     else:
-                        # Workers prepare an empty tensor.
-                        params_tensor = torch.empty(num_params_llm, dtype=torch.float32)
+                        # Other processes prepare an empty float32 tensor to receive the data
+                        child_tensor = torch.empty(num_params_llm, dtype=torch.float32)
 
-                    # 2. Broadcast the parameters from main process to all workers.
-                    dist.broadcast(params_tensor, src=0)
+                    # --- Broadcast Child to All Processes ---
+                    dist.broadcast(child_tensor, src=0)
 
-                    # 3. All processes convert the tensor back to a JAX array.
-                    params_bf16 = jnp.array(params_tensor.numpy()).astype(jnp.bfloat16)
+                    # All processes convert the received float32 tensor back to a bfloat16 JAX array
+                    child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
+                else:
+                    # Single-process execution uses the locally generated child
+                    child_bf16 = child_bf16_main
 
-                    # 4. All processes evaluate the model on the test set.
-                    test_scores_vector = test_eval_fn(params_bf16)
+                # --- Evaluation (All Processes) ---
+                score = train_eval_fn(child_bf16)
 
-                    # 5. The main process calculates and prints the result.
+                # --- Archive Update (Main Process Only) ---
+                if is_main_process:
+                    archive, scores = update_archive_fn(
+                        score, child_bf16, archive, scores, alpha
+                    )
+
+                # Barrier to ensure archive update is complete before the next iteration
+                if dist_enabled:
+                    dist.barrier()
+
+                # --- Periodic Full Archive Evaluation ---
+                # Every 10 forward passes, evaluate all models currently in the archive.
+                if (i + 1) % 10 == 0:
                     if is_main_process:
-                        acc = jnp.mean(test_scores_vector)
-                        # We can also log this to the results dictionary if needed
-                        # For now, just printing for clear visibility.
                         print(
-                            f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
+                            f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
                         )
 
-    # Final barrier to ensure all processes finish before main process returns
-    dist.barrier()
+                    # This loop runs on all processes to keep them in sync for broadcasts.
+                    for j in range(pop_size):
+                        if dist_enabled:
+                            # 1. Main process gets the individual parameters for broadcast.
+                            if is_main_process:
+                                individual_params = archive[j]
+                                params_tensor = torch.from_numpy(
+                                    np.array(individual_params.astype(jnp.float32))
+                                )
+                            else:
+                                # Workers prepare an empty tensor.
+                                params_tensor = torch.empty(
+                                    num_params_llm, dtype=torch.float32
+                                )
 
-    # --- Save the final best model (main process only) ---
-    if is_main_process:
-        if runs > 0:
-            # Find the best parameters from the final archive state of the last run
-            train_fitness = scores.mean(axis=1)
-            best_individual_idx = jnp.argmax(train_fitness)
-            best_params = archive[best_individual_idx]
+                            # 2. Broadcast the parameters from main process to all workers.
+                            dist.broadcast(params_tensor, src=0)
 
-            # Directory path is now imported from the global config file.
-            os.makedirs(RESULTS_DIR, exist_ok=True)
+                            # 3. All processes convert the tensor back to a JAX array.
+                            params_bf16 = jnp.array(params_tensor.numpy()).astype(
+                                jnp.bfloat16
+                            )
+                        else:
+                            params_bf16 = archive[j]
 
-            # Save the best parameters to a file
-            from datetime import datetime
+                        # 4. All processes evaluate the model on the test set.
+                        test_scores_vector = test_eval_fn(params_bf16)
 
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = os.path.join(
-                RESULTS_DIR, f"best_model_run_{run+1}_{timestamp}.npz"
-            )
+                        # 5. The main process calculates and prints the result.
+                        if is_main_process:
+                            acc = jnp.mean(test_scores_vector)
+                            # We can also log this to the results dictionary if needed
+                            # For now, just printing for clear visibility.
+                            print(
+                                f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
+                            )
 
-            print(f"\n🏆 Saving the best model from the last run to: {save_path}")
-            jnp.savez(save_path, params=best_params)
-            print("✅ Model saved successfully.")
+        # Final barrier to ensure all processes finish before main process returns
+        if dist_enabled:
+            dist.barrier()
 
-    return results
+        # --- Save the final best model (main process only) ---
+        if is_main_process:
+            if runs > 0:
+                # Find the best parameters from the final archive state of the last run
+                train_fitness = scores.mean(axis=1)
+                best_individual_idx = jnp.argmax(train_fitness)
+                best_params = archive[best_individual_idx]
+
+                # Directory path is now imported from the global config file.
+                os.makedirs(RESULTS_DIR, exist_ok=True)
+
+                # Save the best parameters to a file
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = os.path.join(
+                    RESULTS_DIR, f"best_model_run_{run+1}_{timestamp}.npz"
+                )
+
+                print(f"\n🏆 Saving the best model from the last run to: {save_path}")
+                jnp.savez(save_path, params=best_params)
+                print("✅ Model saved successfully.")
+
+        return results
+
+
+def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):
+    if sharding is None or make_array_from_callback is None:
+        return jnp.zeros(shape, dtype=dtype)
+
+    def _cb(index):
+        slice_dims = []
+        for dim_idx, dim_size in zip(index, shape):
+            if isinstance(dim_idx, slice):
+                start = 0 if dim_idx.start is None else dim_idx.start
+                stop = dim_size if dim_idx.stop is None else dim_idx.stop
+                slice_dims.append(stop - start)
+            else:
+                slice_dims.append(1)
+        return jnp.zeros(tuple(slice_dims), dtype=dtype)
+
+    return make_array_from_callback(shape, sharding, _cb)
