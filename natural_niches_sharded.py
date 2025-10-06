@@ -103,12 +103,60 @@ def run_natural_niches_sharded(
 
     dataset = load_from_disk(GSM8K_DIR)
 
+    def _compute_max_length(ds) -> int:
+        max_len = 0
+        for split_name in ("train", "test"):
+            split = ds[split_name]
+            for example in split:
+                text = example["question"] + " " + example["answer"]
+                encoding = tokenizer(
+                    text,
+                    add_special_tokens=True,
+                    padding=False,
+                    truncation=False,
+                )
+                input_length = len(encoding["input_ids"])
+                if input_length > max_len:
+                    max_len = input_length
+        return max_len
+
+    max_sequence_length = _compute_max_length(dataset)
+    if is_main_process:
+        print(f"Max tokenized length for GSM8K: {max_sequence_length}")
+
     def preprocess_function(examples):
         inputs = [q + " " + a for q, a in zip(examples["question"], examples["answer"])]
-        model_inputs = tokenizer(
-            inputs, max_length=256, padding="max_length", truncation=True
+        question_encodings = tokenizer(
+            examples["question"],
+            add_special_tokens=False,
+            padding=False,
+            truncation=False,
         )
-        model_inputs["labels"] = model_inputs["input_ids"].copy()
+        model_inputs = tokenizer(
+            inputs,
+            max_length=max_sequence_length,
+            padding="max_length",
+            truncation=True,
+            return_special_tokens_mask=True,
+        )
+
+        labels = []
+        for idx, input_ids in enumerate(model_inputs["input_ids"]):
+            label_row = input_ids.copy()
+            special_mask = model_inputs["special_tokens_mask"][idx]
+            question_tokens = question_encodings["input_ids"][idx]
+            question_token_count = len(question_tokens)
+            seen_non_special = 0
+            for token_pos, is_special in enumerate(special_mask):
+                if is_special:
+                    continue
+                if seen_non_special < question_token_count:
+                    label_row[token_pos] = -100
+                seen_non_special += 1
+            labels.append(label_row)
+
+        model_inputs.pop("special_tokens_mask", None)
+        model_inputs["labels"] = labels
         return model_inputs
 
     tokenized_train_dataset = dataset["train"].map(
