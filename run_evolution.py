@@ -15,11 +15,60 @@ JAX_PLATFORM_NAME=cpu torchrun --nproc_per_node=4 run_evolution.py
 """
 
 import argparse
+from pathlib import Path
 
 # Since this script is now inside the 'natural_niches' directory,
 # we can import directly from the other files in this directory.
 from natural_niches_fn import run_natural_niches
-from config import DEFAULT_MODEL_1, DEFAULT_MODEL_2
+from config import DEFAULT_MODEL_1, DEFAULT_MODEL_2, MODELS_DIR
+
+
+ALLOWED_MODEL_NAMES = [
+    "BERTOverflow",
+    "MathBERT",
+    "Qwen2.5-Coder-1.5B-Instruct",
+    "Qwen2.5-Math-1.5B-Instruct",
+    "agentevol-7b",
+    "wizardmath_7b",
+]
+ALLOWED_MODEL_CHOICES = [f"models/{name}" for name in ALLOWED_MODEL_NAMES]
+ALLOWED_MODEL_MAP = {
+    choice: str((Path(MODELS_DIR) / name).resolve())
+    for choice, name in zip(ALLOWED_MODEL_CHOICES, ALLOWED_MODEL_NAMES)
+}
+
+
+def _resolve_model_path(raw_path: str) -> str:
+    if raw_path in ALLOWED_MODEL_MAP:
+        resolved = Path(ALLOWED_MODEL_MAP[raw_path])
+        if not resolved.exists():
+            raise ValueError(
+                f"Model directory '{resolved}' does not exist."
+            )
+        return str(resolved)
+
+    candidate = Path(raw_path).resolve()
+    for choice, target in ALLOWED_MODEL_MAP.items():
+        if candidate == Path(target):
+            if not candidate.exists():
+                raise ValueError(
+                    f"Model directory '{candidate}' does not exist."
+                )
+            return str(candidate)
+
+    raise ValueError(
+        "Model path must match one of the allowed options: "
+        + ", ".join(ALLOWED_MODEL_CHOICES)
+    )
+
+
+def _default_choice_from(path: str) -> str:
+    try:
+        rel = Path(path).resolve().relative_to(Path(MODELS_DIR).resolve().parent)
+    except ValueError:
+        return ALLOWED_MODEL_CHOICES[0]
+    rel_str = str(rel)
+    return rel_str if rel_str in ALLOWED_MODEL_CHOICES else ALLOWED_MODEL_CHOICES[0]
 
 
 def main():
@@ -29,17 +78,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run Natural Niches evolution for LLMs."
     )
+    default_model1_choice = _default_choice_from(DEFAULT_MODEL_1)
+    default_model2_choice = _default_choice_from(DEFAULT_MODEL_2)
     parser.add_argument(
         "--model1_path",
         type=str,
-        default=DEFAULT_MODEL_1,
-        help=f"Path to the first base model. Defaults to '{DEFAULT_MODEL_1}' from config.py.",
+        default=default_model1_choice,
+        choices=ALLOWED_MODEL_CHOICES,
+        help=(
+            "Path to the first base model under 'models/'. Choices: "
+            + ", ".join(ALLOWED_MODEL_CHOICES)
+        ),
     )
     parser.add_argument(
         "--model2_path",
         type=str,
-        default=DEFAULT_MODEL_2,
-        help=f"Path to the second base model. Defaults to '{DEFAULT_MODEL_2}' from config.py.",
+        default=default_model2_choice,
+        choices=ALLOWED_MODEL_CHOICES,
+        help=(
+            "Path to the second base model under 'models/'. Choices: "
+            + ", ".join(ALLOWED_MODEL_CHOICES)
+        ),
     )
     parser.add_argument(
         "--runs", type=int, default=1, help="Number of independent evolutionary runs."
@@ -77,6 +136,12 @@ def main():
     args = parser.parse_args()
 
     # --- Algorithm Hyperparameters ---
+    try:
+        model1_path = _resolve_model_path(args.model1_path)
+        model2_path = _resolve_model_path(args.model2_path)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     config = {
         "runs": args.runs,
         "pop_size": args.pop_size,
@@ -86,15 +151,15 @@ def main():
         "no_crossover": False,
         "no_splitpoint": False,
         "alpha": 1.0,
-        "model1_path": args.model1_path,
-        "model2_path": args.model2_path,
+        "model1_path": model1_path,
+        "model2_path": model2_path,
         "distributed": True,
         "archive_backend": args.archive_backend,
     }
 
     if args.debug_models:
-        config["model1_path"] = "models/MathBERT"
-        config["model2_path"] = "models/BERTOverflow"
+        config["model1_path"] = _resolve_model_path("models/MathBERT")
+        config["model2_path"] = _resolve_model_path("models/BERTOverflow")
 
     print("--- Starting Natural Niches Evolution for LLMs ---")
     print("Configuration:")

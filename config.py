@@ -26,8 +26,8 @@ RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 #    当您需要添加新模型或数据集时，只需要在这里修改。
 
 # 默认模型路径
-DEFAULT_MODEL_1 = os.path.join(MODELS_DIR, "wizardmath_7b")
-DEFAULT_MODEL_2 = os.path.join(MODELS_DIR, "agentevol-7b")
+DEFAULT_MODEL_1 = os.path.join(MODELS_DIR, "Qwen2.5-Math-1.5B-Instruct")
+DEFAULT_MODEL_2 = os.path.join(MODELS_DIR, "Qwen2.5-Coder-1.5B-Instruct")
 
 # 数据集路径
 GSM8K_DIR = os.path.join(DATASETS_DIR, "gsm8k")
