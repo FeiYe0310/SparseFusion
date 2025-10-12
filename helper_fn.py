@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import torch
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
-from typing import List, Tuple, Any, Union, Literal
+from typing import List, Tuple, Any, Union, Literal, Optional
 from tqdm.auto import tqdm
 
 
@@ -15,20 +15,23 @@ def pytorch_to_jax_flattened(
     and returns the flattened parameters, shapes, and total parameter count.
     The final JAX array is cast to bfloat16 to save memory.
     """
-    params = []
+    params_np = []
     param_shapes = []
     total_params = 0
     param_list = list(model.parameters())
     for p in tqdm(param_list, desc="Flattening PyTorch parameters", disable=False):
-        # Convert to float32 for numpy compatibility, then to numpy array
+        # Convert to float32 for numpy compatibility, then to numpy array on CPU
         param_np = p.detach().cpu().to(torch.float32).numpy()
-        params.append(param_np.flatten())
+        params_np.append(param_np.flatten())
         total_params += p.numel()
         # Store the original torch dtype, not the numpy dtype
         param_shapes.append((p.shape, p.dtype))
 
-    # Create the concatenated array in float32 first
-    flat_params_f32 = jnp.concatenate([jnp.asarray(p) for p in params])
+    # Perform the concatenation in NumPy (CPU RAM) to avoid GPU OOM
+    flat_params_np = np.concatenate(params_np)
+    # Move the final, single flat array to a JAX array on the default device
+    flat_params_f32 = jnp.asarray(flat_params_np)
+
     # Cast to bfloat16 to save significant memory in the JAX archive
     flat_params_bf16 = flat_params_f32.astype(jnp.bfloat16)
 
@@ -253,11 +256,16 @@ def merge_tokenizers_and_align_models(
     return base_tokenizer, base_model, other_model
 
 
-def _load_model(model_path: str, dtype: torch.dtype) -> torch.nn.Module:
+def _load_model(
+    model_path: str, dtype: torch.dtype, device: torch.device
+) -> torch.nn.Module:
+    """Loads a model onto a specified device."""
     try:
-        return AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=dtype)
+        return AutoModelForCausalLM.from_pretrained(
+            model_path, torch_dtype=dtype
+        ).to(device)
     except Exception:
-        return AutoModel.from_pretrained(model_path, torch_dtype=dtype)
+        return AutoModel.from_pretrained(model_path, torch_dtype=dtype).to(device)
 
 
 def get_pre_trained_models_and_skeleton(
@@ -265,6 +273,7 @@ def get_pre_trained_models_and_skeleton(
     model2_path: str,
     *,
     base_tokenizer: Literal["model1", "model2"] = "model1",
+    device: Optional[Union[str, torch.device]] = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]], Any, torch.nn.Module]:
     """
     Loads two pre-trained models, merges their tokenizers (extending the selected base
@@ -275,11 +284,22 @@ def get_pre_trained_models_and_skeleton(
     # For 7B models, it's recommended to use bfloat16 to save memory
     dtype = torch.bfloat16
 
-    print(f"Loading model 1 from: {model1_path} with dtype={dtype}")
-    model1 = _load_model(model1_path, dtype)
+    if device is None:
+        # Default to CPU if no device is specified to prevent accidental GPU OOM
+        target_device = torch.device("cpu")
+        print("Warning: No device specified for model loading. Defaulting to CPU.")
+    else:
+        target_device = torch.device(device)
 
-    print(f"Loading model 2 from: {model2_path} with dtype={dtype}")
-    model2 = _load_model(model2_path, dtype)
+    print(
+        f"Loading model 1 from: {model1_path} with dtype={dtype} onto device: {target_device}"
+    )
+    model1 = _load_model(model1_path, dtype, target_device)
+
+    print(
+        f"Loading model 2 from: {model2_path} with dtype={dtype} onto device: {target_device}"
+    )
+    model2 = _load_model(model2_path, dtype, target_device)
 
     # Ensure models are in evaluation mode
     model1.eval()
@@ -342,6 +362,7 @@ def get_pre_trained_models(
     *,
     base_tokenizer: Literal["model1", "model2"] = "model1",
     return_tokenizer: bool = False,
+    device: Optional[Union[str, torch.device]] = None,
 ) -> Union[
     Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]]],
     Tuple[jnp.ndarray, jnp.ndarray, List[Tuple[Any, Any]], Any],
@@ -352,12 +373,14 @@ def get_pre_trained_models(
         model1_path,
         model2_path,
         base_tokenizer=base_tokenizer,
-        return_tokenizer=return_tokenizer,
+        device=device,
     )
 
     if return_tokenizer:
+        # This branch is now incorrect because get_pre_trained_models_and_skeleton
+        # no longer accepts return_tokenizer. The logic is handled here.
         flat_params1, flat_params2, param_shapes1, tokenizer_shared, _ = results
         return flat_params1, flat_params2, param_shapes1, tokenizer_shared
 
-    flat_params1, flat_params2, param_shapes1, _ = results
+    flat_params1, flat_params2, param_shapes1, _, _ = results
     return flat_params1, flat_params2, param_shapes1

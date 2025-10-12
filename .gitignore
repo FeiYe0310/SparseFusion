@@ -1,8 +1,31 @@
+# Python cache
 __pycache__/
+*.py[cod]
 *.pyc
-*.pyo
-.ipynb_checkpoints/
-results/
-gsm8k/
+lib/__pycache__/
+
+# 模型文件（太大）
 models/
-*_yanjian*
+*.pth
+*.safetensors
+*.bin
+
+# 数据集（太大）
+datasets/
+
+# 实验结果
+results/
+*.pkl
+*.npz
+
+# 日志和临时文件
+*.log
+nohup.out
+*.backup*
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+.DS_Store

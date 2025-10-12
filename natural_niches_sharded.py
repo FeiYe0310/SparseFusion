@@ -75,23 +75,90 @@ def run_natural_niches_sharded(
     dist_enabled = distributed and world_size > 1
 
     if is_main_process:
-        print("Loading tokenizer and models...")
+        print("Loading tokenizer and models on main process (CPU)...")
+        # Load models on CPU on the main process to avoid OOM on GPUs.
+        (
+            model_1,
+            model_2,
+            param_shapes,
+            tokenizer,
+            model_skeleton,
+        ) = get_pre_trained_models_and_skeleton(
+            model1_path,
+            model2_path,
+            device="cpu",  # Explicitly load on CPU
+        )
+    else:
+        # Other processes will receive the data via broadcast.
+        # Initialize placeholders.
+        model_1, model_2, param_shapes, tokenizer, model_skeleton = (
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
-    (
-        model_1,
-        model_2,
-        param_shapes,
-        tokenizer,
-        model_skeleton,
-    ) = get_pre_trained_models_and_skeleton(
-        model1_path,
-        model2_path,
-    )
+    if dist_enabled and dist.is_initialized():
+        # --- Broadcast tokenizer and metadata from main process ---
+        objects_to_broadcast = [param_shapes, tokenizer, model_skeleton]
+        if is_main_process:
+            # The objects themselves are sent by the main process
+            dist.broadcast_object_list(objects_to_broadcast, src=0)
+        else:
+            # Other processes receive the objects
+            dist.broadcast_object_list(objects_to_broadcast, src=0)
+            # Unpack the received objects
+            param_shapes, tokenizer, model_skeleton = objects_to_broadcast
+
+        # --- Broadcast the JAX model parameters ---
+        # Determine num_params on the main process and broadcast it
+        if is_main_process:
+            num_params_llm = model_1.shape[0]
+            num_params_tensor = torch.tensor(
+                [num_params_llm], dtype=torch.long, device=device
+            )
+        else:
+            num_params_tensor = torch.tensor([0], dtype=torch.long, device=device)
+
+        dist.broadcast(num_params_tensor, src=0)
+        num_params_llm = num_params_tensor.item()
+
+        # Prepare tensors for broadcast
+        if is_main_process:
+            # Convert JAX arrays to PyTorch tensors for broadcasting
+            model_1_tensor = torch_dlpack.from_dlpack(
+                jax_dlpack.to_dlpack(model_1)
+            ).to(device)
+            model_2_tensor = torch_dlpack.from_dlpack(
+                jax_dlpack.to_dlpack(model_2)
+            ).to(device)
+        else:
+            # Create empty tensors on other processes to receive the data
+            model_1_tensor = torch.empty(
+                num_params_llm, dtype=torch.bfloat16, device=device
+            )
+            model_2_tensor = torch.empty(
+                num_params_llm, dtype=torch.bfloat16, device=device
+            )
+
+        # Broadcast both model tensors
+        dist.broadcast(model_1_tensor, src=0)
+        dist.broadcast(model_2_tensor, src=0)
+        dist.barrier()  # Synchronize all processes
+
+        # Convert back to JAX arrays on each process (now on their respective GPUs)
+        model_1 = jax_dlpack.from_dlpack(torch_dlpack.to_dlpack(model_1_tensor))
+        model_2 = jax_dlpack.from_dlpack(torch_dlpack.to_dlpack(model_2_tensor))
+    else:
+        # For single-process execution, no broadcasting is needed.
+        num_params_llm = model_1.shape[0]
+
+    if is_main_process:
+        print("Loading tokenizer and models... complete.")
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-
-    num_params_llm = model_1.shape[0]
 
     if is_main_process:
         print("Loading and preprocessing GSM8K dataset from local directory...")
