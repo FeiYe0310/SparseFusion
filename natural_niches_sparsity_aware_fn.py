@@ -302,22 +302,37 @@ def prune_model_weights(
             for name in subset:
                 W = subset[name].weight.data
                 original_dtype = W.dtype
-                original_device = W.device
                 
-                # 转换到numpy进行计算（完全避免PyTorch的bfloat16限制）
-                W_np = W.cpu().numpy().astype(np.float32)
+                # 直接在CPU上用numpy计算（完全避免GPU/bfloat16问题）
+                # 关键：先detach，避免autograd graph的dtype限制
+                W_np = W.detach().cpu().numpy()
+                
+                # 确保是float32
+                if W_np.dtype != np.float32:
+                    W_np = W_np.astype(np.float32)
                 
                 # 计算magnitude
                 W_metric = np.abs(W_np)
                 
-                # 计算阈值（使用numpy的percentile，避免sort）
+                # 计算阈值（使用numpy的percentile）
                 thresh = np.percentile(W_metric, sparsity_ratio * 100)
                 
                 # 应用剪枝
                 W_np[W_metric <= thresh] = 0
                 
-                # 转回torch tensor，恢复原始dtype和device
-                subset[name].weight.data = torch.from_numpy(W_np).to(dtype=original_dtype, device=original_device)
+                # 转回torch tensor
+                W_pruned = torch.from_numpy(W_np)
+                
+                # 转换dtype（在CPU上安全）
+                if original_dtype != W_pruned.dtype:
+                    W_pruned = W_pruned.to(original_dtype)
+                
+                # 最后再移到原设备
+                if W.device != W_pruned.device:
+                    W_pruned = W_pruned.to(W.device)
+                
+                # 更新权重
+                subset[name].weight.data = W_pruned
     
     return pytorch_model
 
