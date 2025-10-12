@@ -246,6 +246,59 @@ def prune_magnitude(
     return pruned_params
 
 
+def prune_model_weights(
+    pytorch_model: torch.nn.Module,
+    sparsity_ratio: float
+) -> torch.nn.Module:
+    """
+    直接对PyTorch模型的权重进行剪枝（基于magnitude）
+    不需要校准数据，不需要forward pass
+    保留Wanda的层级遍历逻辑
+    
+    Args:
+        pytorch_model: PyTorch模型
+        sparsity_ratio: 目标稀疏度
+    
+    Returns:
+        剪枝后的模型（in-place修改）
+    """
+    import torch.nn as nn
+    
+    def find_layers(module, layers=[nn.Linear], name=''):
+        if type(module) in layers:
+            return {name: module}
+        res = {}
+        for name1, child in module.named_children():
+            res.update(find_layers(
+                child, layers=layers, name=name + '.' + name1 if name != '' else name1
+            ))
+        return res
+    
+    # 遍历所有transformer层
+    if hasattr(pytorch_model, 'model') and hasattr(pytorch_model.model, 'layers'):
+        layers = pytorch_model.model.layers
+        
+        for i in range(len(layers)):
+            layer = layers[i]
+            subset = find_layers(layer)
+            
+            # 对每个线性层的权重进行剪枝
+            for name in subset:
+                W = subset[name].weight.data
+                
+                # 计算magnitude
+                W_metric = torch.abs(W)
+                
+                # 计算阈值（unstructured pruning）
+                thresh = torch.sort(W_metric.flatten())[0][int(W.numel() * sparsity_ratio)]
+                
+                # 应用剪枝
+                W_mask = (W_metric <= thresh)
+                W[W_mask] = 0
+    
+    return pytorch_model
+
+
 def prune_with_wanda(
     jax_flat_params: jnp.ndarray,
     model_skeleton: torch.nn.Module,
@@ -256,29 +309,25 @@ def prune_with_wanda(
     nsamples: int = 128
 ) -> jnp.ndarray:
     """
-    使用Wanda剪枝工具对JAX参数进行剪枝
-    如果Wanda失败，自动降级到magnitude剪枝
+    对JAX参数进行剪枝（纯剪枝逻辑，无校准）
     
     流程：
     1. JAX flat params → PyTorch model
-    2. 应用Wanda剪枝
+    2. 应用magnitude剪枝（Wanda风格的层级遍历）
     3. PyTorch model → JAX flat params
     
     Args:
         jax_flat_params: JAX扁平化参数数组
         model_skeleton: PyTorch模型骨架
         param_shapes: 参数形状列表
-        tokenizer: Tokenizer用于Wanda校准
+        tokenizer: 未使用（保留接口兼容性）
         sparsity_ratio: 目标稀疏度
         device: 计算设备
-        nsamples: Wanda校准样本数
+        nsamples: 未使用（保留接口兼容性）
     
     Returns:
         剪枝后的JAX参数数组
     """
-    from lib.prune import prune_wanda
-    from lib.data import get_loaders
-    
     # 步骤1: 转换为PyTorch模型
     base_model = (
         model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
@@ -288,33 +337,15 @@ def prune_with_wanda(
     )
     pytorch_model.eval()
     
-    # 步骤2: 准备Wanda参数
-    class PruningArgs:
-        def __init__(self):
-            self.sparsity_ratio = sparsity_ratio
-            self.nsamples = nsamples
-            self.seed = 0
-            self.use_variant = False
-            self.sparsity_type = "unstructured"
+    # 步骤2: 直接剪枝（不需要校准数据）
+    pytorch_model = prune_model_weights(pytorch_model, sparsity_ratio)
     
-    args = PruningArgs()
+    # 步骤3: 转回JAX参数
+    pruned_params = []
+    for param in pytorch_model.parameters():
+        pruned_params.append(param.detach().cpu().numpy().flatten())
     
-    # 步骤3: 应用Wanda剪枝
-    try:
-        prune_wanda(args, pytorch_model, tokenizer, device, prune_n=0, prune_m=0)
-        
-        # 步骤4: 转回JAX参数
-        pruned_params = []
-        for param in pytorch_model.parameters():
-            pruned_params.append(param.detach().cpu().numpy().flatten())
-        
-        return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
-        
-    except Exception as e:
-        print(f"⚠️  Wanda pruning failed: {e}")
-        print(f"🔄 Falling back to magnitude pruning...")
-        # 降级到magnitude剪枝
-        return prune_magnitude(jax_flat_params, sparsity_ratio)
+    return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
 
 
 # ==============================================================================
