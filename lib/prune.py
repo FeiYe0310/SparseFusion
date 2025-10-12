@@ -65,7 +65,16 @@ def prepare_calibration_input(model, dataloader, device):
         device = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros((128, model.seqlen, model.config.hidden_size), dtype=dtype, device=device)
+    
+    # Get seqlen: use model.seqlen if available, otherwise get from config or use default
+    if hasattr(model, 'seqlen'):
+        seqlen = model.seqlen
+    elif hasattr(model.config, 'max_position_embeddings'):
+        seqlen = model.config.max_position_embeddings
+    else:
+        seqlen = 2048  # default fallback
+    
+    inps = torch.zeros((128, seqlen, model.config.hidden_size), dtype=dtype, device=device)
     inps.requires_grad = False
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
@@ -127,9 +136,17 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
 def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
     use_cache = model.config.use_cache 
     model.config.use_cache = False 
+    
+    # Get seqlen from model or config
+    if hasattr(model, 'seqlen'):
+        seqlen = model.seqlen
+    elif hasattr(model.config, 'max_position_embeddings'):
+        seqlen = model.config.max_position_embeddings
+    else:
+        seqlen = 2048
 
     print("loading calibdation data")
-    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=seqlen,tokenizer=tokenizer)
     print("dataset loading complete")
     with torch.no_grad():
         inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device)
@@ -214,7 +231,16 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     ## SparseGPT code available at: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
     print('Starting ...')
-    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    
+    # Get seqlen from model or config
+    if hasattr(model, 'seqlen'):
+        seqlen = model.seqlen
+    elif hasattr(model.config, 'max_position_embeddings'):
+        seqlen = model.config.max_position_embeddings
+    else:
+        seqlen = 2048
+    
+    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=seqlen,tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -225,7 +251,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
-        (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
+        (args.nsamples, seqlen, model.config.hidden_size), dtype=dtype, device=dev
     )
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
@@ -305,7 +331,16 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 def prune_ablate(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     ## SparseGPT code available at: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
     print('Starting ...')
-    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    
+    # Get seqlen from model or config
+    if hasattr(model, 'seqlen'):
+        seqlen = model.seqlen
+    elif hasattr(model.config, 'max_position_embeddings'):
+        seqlen = model.config.max_position_embeddings
+    else:
+        seqlen = 2048
+    
+    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=seqlen,tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -316,7 +351,7 @@ def prune_ablate(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
-        (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
+        (args.nsamples, seqlen, model.config.hidden_size), dtype=dtype, device=dev
     )
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
