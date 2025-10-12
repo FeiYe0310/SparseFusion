@@ -304,12 +304,8 @@ def prune_model_weights(
                 original_dtype = W.dtype
                 
                 # 直接在CPU上用numpy计算（完全避免GPU/bfloat16问题）
-                # 关键：先detach，避免autograd graph的dtype限制
-                W_np = W.detach().cpu().numpy()
-                
-                # 确保是float32
-                if W_np.dtype != np.float32:
-                    W_np = W_np.astype(np.float32)
+                # 关键：PyTorch的.numpy()不支持bfloat16，必须先转float32
+                W_np = W.detach().cpu().float().numpy()  # ← 先.float()再.numpy()
                 
                 # 计算magnitude
                 W_metric = np.abs(W_np)
