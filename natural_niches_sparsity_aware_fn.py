@@ -233,15 +233,21 @@ def prune_magnitude(
     if sparsity_ratio <= 0.0:
         return jax_flat_params
     
+    # 保存原始dtype
+    original_dtype = jax_flat_params.dtype
+    
+    # 转换为float32进行计算（JAX的percentile在bfloat16上也可能有问题）
+    params_float = jax_flat_params.astype(jnp.float32)
+    
     # 计算阈值
-    abs_params = jnp.abs(jax_flat_params)
+    abs_params = jnp.abs(params_float)
     threshold = jnp.percentile(abs_params, sparsity_ratio * 100)
     
     # 剪枝：小于阈值的设为0
-    pruned_params = jnp.where(abs_params < threshold, 0.0, jax_flat_params)
+    pruned_params = jnp.where(abs_params < threshold, 0.0, params_float)
     
-    # 计算实际稀疏度
-    actual_sparsity = (pruned_params == 0).sum() / pruned_params.size
+    # 转回原始dtype
+    pruned_params = pruned_params.astype(original_dtype)
     
     return pruned_params
 
