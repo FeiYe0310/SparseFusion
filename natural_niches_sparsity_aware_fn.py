@@ -873,25 +873,18 @@ def run_natural_niches_sparsity_aware(
                         parents_bf16[1].astype(jnp.float32),
                     )
                     
-                    # 2. Apply Wanda pruning to parents (NEW)
+                    # 2. Apply magnitude pruning to parents (NEW)
+                    # 使用纯JAX的magnitude剪枝，避免PyTorch转换
                     if enable_pruning:
                         try:
                             parents_f32 = (
-                                prune_with_wanda(
+                                prune_magnitude(
                                     parents_f32[0].astype(jnp.bfloat16),
-                                    model_skeleton,
-                                    param_shapes,
-                                    tokenizer,
-                                    pruning_sparsity,
-                                    device
+                                    pruning_sparsity
                                 ).astype(jnp.float32),
-                                prune_with_wanda(
+                                prune_magnitude(
                                     parents_f32[1].astype(jnp.bfloat16),
-                                    model_skeleton,
-                                    param_shapes,
-                                    tokenizer,
-                                    pruning_sparsity,
-                                    device
+                                    pruning_sparsity
                                 ).astype(jnp.float32),
                             )
                         except Exception as e:
