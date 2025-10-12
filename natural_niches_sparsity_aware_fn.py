@@ -292,9 +292,10 @@ def prune_model_weights(
             for name in subset:
                 W = subset[name].weight.data
                 original_dtype = W.dtype
+                original_device = W.device
                 
-                # 转换为float32进行计算（避免bfloat16不支持的操作）
-                W_float = W.float()
+                # 转换为float32并移到CPU进行计算（避免bfloat16不支持的操作）
+                W_float = W.float().cpu()
                 
                 # 计算magnitude
                 W_metric = torch.abs(W_float)
@@ -306,8 +307,8 @@ def prune_model_weights(
                 W_mask = (W_metric <= thresh)
                 W_float[W_mask] = 0
                 
-                # 转回原始dtype
-                subset[name].weight.data = W_float.to(original_dtype)
+                # 转回原始dtype和device
+                subset[name].weight.data = W_float.to(dtype=original_dtype, device=original_device)
     
     return pytorch_model
 
