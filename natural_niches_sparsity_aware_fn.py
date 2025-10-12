@@ -303,31 +303,29 @@ def prune_model_weights(
                 W = subset[name].weight.data
                 original_dtype = W.dtype
                 
-                # 直接在CPU上用numpy计算（完全避免GPU/bfloat16问题）
-                # 关键：PyTorch的.numpy()不支持bfloat16，必须先转float32
-                W_np = W.detach().cpu().float().numpy()  # ← 先.float()再.numpy()
+                # 优化：尽量在GPU上计算，避免CPU-GPU传输
+                # 1. 转float32（GPU上）
+                W_float = W.float()
                 
-                # 计算magnitude
-                W_metric = np.abs(W_np)
+                # 2. 计算magnitude（GPU上）
+                W_metric = torch.abs(W_float)
                 
-                # 计算阈值（使用numpy的percentile）
-                thresh = np.percentile(W_metric, sparsity_ratio * 100)
+                # 3. 计算阈值（使用torch.kthvalue在GPU上，避免sort）
+                k = int(W.numel() * sparsity_ratio)
+                if k > 0 and k < W.numel():
+                    # kthvalue在GPU上计算，比CPU numpy快很多
+                    thresh = torch.kthvalue(W_metric.flatten(), k).values
+                else:
+                    thresh = 0.0
                 
-                # 应用剪枝
-                W_np[W_metric <= thresh] = 0
+                # 4. 应用剪枝（GPU上）
+                mask = W_metric <= thresh
+                W_float[mask] = 0
                 
-                # 转回torch tensor
-                W_pruned = torch.from_numpy(W_np)
+                # 5. 转回原始dtype（GPU上）
+                W_pruned = W_float.to(original_dtype)
                 
-                # 转换dtype（在CPU上安全）
-                if original_dtype != W_pruned.dtype:
-                    W_pruned = W_pruned.to(original_dtype)
-                
-                # 最后再移到原设备
-                if W.device != W_pruned.device:
-                    W_pruned = W_pruned.to(W.device)
-                
-                # 更新权重
+                # 更新权重（无需移动设备，全程GPU）
                 subset[name].weight.data = W_pruned
     
     return pytorch_model
@@ -383,8 +381,8 @@ def prune_with_wanda(
         print(f"[DEBUG] Step 3: Converting back to JAX...")
         pruned_params = []
         for i, param in enumerate(pytorch_model.parameters()):
-            print(f"[DEBUG] Step 3.{i}: param dtype={param.dtype}, device={param.device}")
-            pruned_params.append(param.detach().cpu().numpy().flatten())
+            # 关键：先.float()再.numpy()，避免bfloat16错误
+            pruned_params.append(param.detach().cpu().float().numpy().flatten())
         print(f"[DEBUG] Step 3 SUCCESS")
         
         return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
