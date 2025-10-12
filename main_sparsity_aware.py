@@ -147,13 +147,21 @@ def main():
     if args.pruning_sparsity > 0:
         filename_parts.append(f"prune_{args.pruning_method}_{args.pruning_sparsity:.2f}")
     
-    filename = "_".join(filename_parts) + ".pkl"
-    output_path = os.path.join(args.output_dir, filename)
+    base_filename = "_".join(filename_parts)
     
-    with open(output_path, "wb") as f:
+    # Save as pickle (complete data for analysis)
+    pkl_path = os.path.join(args.output_dir, base_filename + ".pkl")
+    with open(pkl_path, "wb") as f:
         pickle.dump(results, f)
+    print(f"\n✅ Results (pickle) saved to: {pkl_path}")
     
-    print(f"\n✅ Results saved to: {output_path}")
+    # Save as JSON (human-readable logs)
+    import json
+    json_path = os.path.join(args.output_dir, base_filename + ".json")
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"✅ Results (JSON) saved to: {json_path}")
+    
     print("=" * 70)
 
 

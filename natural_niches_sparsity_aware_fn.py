@@ -1068,6 +1068,51 @@ def run_natural_niches_sparsity_aware(
                     archive, scores = update_archive_fn(
                         score, child_bf16, archive, scores, alpha, omega, beta, tau, num_tasks, epsilon
                     )
+                    
+                    # Record iteration statistics
+                    iteration_stats = {
+                        "iteration": i + 1,
+                        "child_fitness": float(jnp.mean(score)),
+                        "child_sparsity": float(compute_sparsity(child_bf16, epsilon)),
+                    }
+                    
+                    # Record archive statistics
+                    archive_fitness = []
+                    archive_sparsity = []
+                    archive_total_scores = []
+                    for j in range(pop_size):
+                        ind_params = archive[j]
+                        ind_fitness = float(jnp.mean(scores[j]))
+                        ind_sparsity = float(compute_sparsity(ind_params, epsilon))
+                        
+                        # Compute total score using same formula as selection
+                        normalized_fitness = compute_normalized_fitness(
+                            scores[j:j+1], alpha, num_tasks
+                        )[0]
+                        sparsity_scores = compute_sparsity_scores(
+                            archive[j:j+1], tau, epsilon
+                        )
+                        total_scores = compute_total_scores(
+                            jnp.array([normalized_fitness]), 
+                            sparsity_scores, 
+                            omega, beta,
+                            archive[j:j+1],
+                            epsilon
+                        )
+                        ind_total_score = float(total_scores[0])
+                        
+                        archive_fitness.append(ind_fitness)
+                        archive_sparsity.append(ind_sparsity)
+                        archive_total_scores.append(ind_total_score)
+                    
+                    iteration_stats["archive_fitness_mean"] = float(np.mean(archive_fitness))
+                    iteration_stats["archive_fitness_max"] = float(np.max(archive_fitness))
+                    iteration_stats["archive_sparsity_mean"] = float(np.mean(archive_sparsity))
+                    iteration_stats["archive_sparsity_min"] = float(np.min(archive_sparsity))
+                    iteration_stats["archive_total_score_mean"] = float(np.mean(archive_total_scores))
+                    iteration_stats["archive_total_score_max"] = float(np.max(archive_total_scores))
+                    
+                    results[run]["iterations"].append(iteration_stats)
 
                 if dist_enabled:
                     dist.barrier()
@@ -1118,6 +1163,18 @@ def run_natural_niches_sparsity_aware(
                                 print(
                                     f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
                                 )
+                            
+                            # Record test evaluation results
+                            if "test_evaluations" not in results[run]:
+                                results[run]["test_evaluations"] = []
+                            
+                            test_eval_stats = {
+                                "iteration": i + 1,
+                                "individual": j + 1,
+                                "test_accuracy": float(acc),
+                                "sparsity": float(compute_sparsity(params_bf16, epsilon)) if log_sparsity_stats else None
+                            }
+                            results[run]["test_evaluations"].append(test_eval_stats)
 
         if dist_enabled:
             dist.barrier()
@@ -1145,7 +1202,21 @@ def run_natural_niches_sparsity_aware(
                 
                 # Log final statistics
                 best_sparsity = compute_sparsity(best_params, epsilon)
+                best_fitness = float(jnp.mean(scores[best_individual_idx]))
+                best_total_score = float(total_scores[best_individual_idx])
+                
+                print(f"   Final fitness: {best_fitness:.4f}")
                 print(f"   Final sparsity: {best_sparsity:.4f}")
+                print(f"   Final total score: {best_total_score:.4f}")
+                
+                # Record final best model info
+                results[run]["final_best_model"] = {
+                    "save_path": save_path,
+                    "fitness": best_fitness,
+                    "sparsity": float(best_sparsity),
+                    "total_score": best_total_score,
+                    "individual_idx": int(best_individual_idx)
+                }
                 
                 jnp.savez(save_path, params=best_params)
                 print("✅ Model saved successfully.")
