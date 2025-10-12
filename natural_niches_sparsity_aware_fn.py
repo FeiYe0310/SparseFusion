@@ -460,11 +460,16 @@ def create_evaluation_fn_for_llm(
         local_results_tensor = torch.cat(local_scores)
 
         if distributed:
+            # Move tensor to GPU for NCCL backend
+            device = next(base_model.parameters()).device
+            local_results_tensor = local_results_tensor.to(device)
             gathered_tensors = [
                 torch.empty_like(local_results_tensor) for _ in range(world_size)
             ]
             dist.all_gather(gathered_tensors, local_results_tensor)
             full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
+            # Move back to CPU for numpy conversion
+            full_results_tensor = full_results_tensor.cpu()
         else:
             full_results_tensor = local_results_tensor[: len(tokenized_dataset)]
 
