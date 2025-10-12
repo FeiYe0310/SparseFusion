@@ -1086,20 +1086,12 @@ def run_natural_niches_sparsity_aware(
                         ind_sparsity = float(compute_sparsity(ind_params, epsilon))
                         
                         # Compute total score using same formula as selection
-                        normalized_fitness = compute_normalized_fitness(
-                            scores[j:j+1], alpha, num_tasks
-                        )[0]
-                        sparsity_scores = compute_sparsity_scores(
-                            archive[j:j+1], tau, epsilon
+                        ind_total_scores = compute_total_scores(
+                            archive[j:j+1], 
+                            scores[j:j+1], 
+                            omega, beta, tau, alpha, num_tasks, epsilon
                         )
-                        total_scores = compute_total_scores(
-                            jnp.array([normalized_fitness]), 
-                            sparsity_scores, 
-                            omega, beta,
-                            archive[j:j+1],
-                            epsilon
-                        )
-                        ind_total_score = float(total_scores[0])
+                        ind_total_score = float(ind_total_scores[0])
                         
                         archive_fitness.append(ind_fitness)
                         archive_sparsity.append(ind_sparsity)
