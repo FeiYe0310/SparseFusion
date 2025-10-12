@@ -499,10 +499,10 @@ def create_evaluation_fn_for_llm(
                 # 原始答案文本（用于提取ground truth）
                 answer_texts = batch["answer_text"]
                 
-                # 生成答案（最多64个token，足够数学答案+简短推理）
+                # 生成答案（最多256个token，保证完整推理过程）
                 generated_ids = restored_model.generate(
                     input_ids,
-                    max_new_tokens=64,
+                    max_new_tokens=256,
                     do_sample=False,  # 贪婪解码，保证可重复
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
