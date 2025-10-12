@@ -769,6 +769,12 @@ def run_natural_niches_sparsity_aware(
     
     # 对于decoder-only模型，生成时必须用左填充
     tokenizer.padding_side = 'left'
+    
+    # 清除模型默认的采样参数（我们使用贪婪解码）
+    if hasattr(model_skeleton, 'generation_config'):
+        model_skeleton.generation_config.temperature = None
+        model_skeleton.generation_config.top_p = None
+        model_skeleton.generation_config.top_k = None
 
     num_params_llm = model_1.shape[0]
 
@@ -802,8 +808,11 @@ def run_natural_niches_sparsity_aware(
         
         return model_inputs
 
-    tokenized_train_dataset = dataset["train"].map(
-        preprocess_function, batched=True, remove_columns=["question", "answer"]
+    # 训练和测试都只使用前50个样本，加快评估速度
+    tokenized_train_dataset = (
+        dataset["train"]
+        .select(range(50))
+        .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
     tokenized_test_dataset = (
         dataset["test"]
