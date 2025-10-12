@@ -102,7 +102,8 @@ if (( GPUS_PER_NODE > 1 )); then
         --pruning_sparsity ${PRUNING_SPARSITY} \
         --output_dir "${OUTPUT_DIR}" \
         --log_sparsity_stats \
-        --archive_backend "${ARCHIVE_BACKEND}"
+        --archive_backend "${ARCHIVE_BACKEND}" \
+        --distributed
 else
     echo "[Baseline] Launching single-process python run"
     exec python main_sparsity_aware.py \
