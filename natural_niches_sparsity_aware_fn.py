@@ -1069,42 +1069,27 @@ def run_natural_niches_sparsity_aware(
                         score, child_bf16, archive, scores, alpha, omega, beta, tau, num_tasks, epsilon
                     )
                     
-                    # Record iteration statistics
-                    iteration_stats = {
-                        "iteration": i + 1,
-                        "child_fitness": float(jnp.mean(score)),
-                        "child_sparsity": float(compute_sparsity(child_bf16, epsilon)),
-                    }
-                    
-                    # Record archive statistics
-                    archive_fitness = []
-                    archive_sparsity = []
-                    archive_total_scores = []
-                    for j in range(pop_size):
-                        ind_params = archive[j]
-                        ind_fitness = float(jnp.mean(scores[j]))
-                        ind_sparsity = float(compute_sparsity(ind_params, epsilon))
-                        
-                        # Compute total score using same formula as selection
-                        ind_total_scores = compute_total_scores(
-                            archive[j:j+1], 
-                            scores[j:j+1], 
-                            omega, beta, tau, alpha, num_tasks, epsilon
+                    # Record iteration statistics (every 10 steps to reduce overhead)
+                    if (i + 1) % 10 == 0 or i == 0:
+                        # Compute all archive statistics efficiently
+                        archive_fitness_vals = jnp.mean(scores, axis=1)
+                        archive_sparsity_vals = jnp.array([compute_sparsity(archive[j], epsilon) for j in range(pop_size)])
+                        archive_total_scores = compute_total_scores(
+                            archive, scores, omega, beta, tau, alpha, num_tasks, epsilon
                         )
-                        ind_total_score = float(ind_total_scores[0])
                         
-                        archive_fitness.append(ind_fitness)
-                        archive_sparsity.append(ind_sparsity)
-                        archive_total_scores.append(ind_total_score)
-                    
-                    iteration_stats["archive_fitness_mean"] = float(np.mean(archive_fitness))
-                    iteration_stats["archive_fitness_max"] = float(np.max(archive_fitness))
-                    iteration_stats["archive_sparsity_mean"] = float(np.mean(archive_sparsity))
-                    iteration_stats["archive_sparsity_min"] = float(np.min(archive_sparsity))
-                    iteration_stats["archive_total_score_mean"] = float(np.mean(archive_total_scores))
-                    iteration_stats["archive_total_score_max"] = float(np.max(archive_total_scores))
-                    
-                    results[run]["iterations"].append(iteration_stats)
+                        iteration_stats = {
+                            "iteration": i + 1,
+                            "child_fitness": float(jnp.mean(score)),
+                            "child_sparsity": float(compute_sparsity(child_bf16, epsilon)),
+                            "archive_fitness_mean": float(jnp.mean(archive_fitness_vals)),
+                            "archive_fitness_max": float(jnp.max(archive_fitness_vals)),
+                            "archive_sparsity_mean": float(jnp.mean(archive_sparsity_vals)),
+                            "archive_sparsity_min": float(jnp.min(archive_sparsity_vals)),
+                            "archive_total_score_mean": float(jnp.mean(archive_total_scores)),
+                            "archive_total_score_max": float(jnp.max(archive_total_scores)),
+                        }
+                        results[run]["iterations"].append(iteration_stats)
 
                 if dist_enabled:
                     dist.barrier()
