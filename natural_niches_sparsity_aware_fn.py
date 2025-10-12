@@ -766,6 +766,9 @@ def run_natural_niches_sparsity_aware(
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    
+    # 对于decoder-only模型，生成时必须用左填充
+    tokenizer.padding_side = 'left'
 
     num_params_llm = model_1.shape[0]
 
