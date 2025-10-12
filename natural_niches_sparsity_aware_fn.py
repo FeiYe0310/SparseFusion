@@ -499,10 +499,10 @@ def create_evaluation_fn_for_llm(
                 # 原始答案文本（用于提取ground truth）
                 answer_texts = batch["answer_text"]
                 
-                # 生成答案（最多256个token）
+                # 生成答案（最多64个token，足够数学答案+简短推理）
                 generated_ids = restored_model.generate(
                     input_ids,
-                    max_new_tokens=256,
+                    max_new_tokens=64,
                     do_sample=False,  # 贪婪解码，保证可重复
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
@@ -798,7 +798,7 @@ def run_natural_niches_sparsity_aware(
         questions = examples["question"]
         model_inputs = tokenizer(
             questions, 
-            max_length=128,  # 问题部分较短
+            max_length=256,  # GSM8K问题有时较长
             padding="max_length", 
             truncation=True
         )
