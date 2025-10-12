@@ -360,40 +360,25 @@ def prune_with_wanda(
     Returns:
         剪枝后的JAX参数数组
     """
-    try:
-        # 步骤1: 转换为PyTorch模型
-        print(f"[DEBUG] Step 1: Converting JAX params to PyTorch model...")
-        base_model = (
-            model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
-        )
-        pytorch_model = jax_flattened_to_pytorch_model(
-            jax_flat_params, base_model, param_shapes
-        )
-        print(f"[DEBUG] Step 1 SUCCESS")
-        pytorch_model.eval()
-        
-        # 步骤2: 直接剪枝（不需要校准数据）
-        print(f"[DEBUG] Step 2: Pruning model weights...")
-        pytorch_model = prune_model_weights(pytorch_model, sparsity_ratio)
-        print(f"[DEBUG] Step 2 SUCCESS")
-        
-        # 步骤3: 转回JAX参数
-        print(f"[DEBUG] Step 3: Converting back to JAX...")
-        pruned_params = []
-        for i, param in enumerate(pytorch_model.parameters()):
-            # 关键：先.float()再.numpy()，避免bfloat16错误
-            pruned_params.append(param.detach().cpu().float().numpy().flatten())
-        print(f"[DEBUG] Step 3 SUCCESS")
-        
-        return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
-    except Exception as e:
-        import traceback
-        print(f"[DEBUG] ERROR at some step:")
-        print(f"[DEBUG] Error type: {type(e)}")
-        print(f"[DEBUG] Error message: {e}")
-        print(f"[DEBUG] Traceback:")
-        traceback.print_exc()
-        raise
+    # 步骤1: 转换为PyTorch模型
+    base_model = (
+        model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+    )
+    pytorch_model = jax_flattened_to_pytorch_model(
+        jax_flat_params, base_model, param_shapes
+    )
+    pytorch_model.eval()
+    
+    # 步骤2: 直接剪枝（不需要校准数据）
+    pytorch_model = prune_model_weights(pytorch_model, sparsity_ratio)
+    
+    # 步骤3: 转回JAX参数
+    pruned_params = []
+    for param in pytorch_model.parameters():
+        # 关键：先.float()再.numpy()，避免bfloat16错误
+        pruned_params.append(param.detach().cpu().float().numpy().flatten())
+    
+    return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
 
 
 # ==============================================================================
