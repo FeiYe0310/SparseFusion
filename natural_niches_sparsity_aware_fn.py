@@ -443,6 +443,23 @@ def create_evaluation_fn_for_llm(
     )
     device = next(base_model.parameters()).device
 
+    def collate_fn(batch):
+        """
+        自定义collate函数：
+        - input_ids, attention_mask -> stack成tensor
+        - answer_text -> 保持为字符串列表
+        """
+        import torch
+        input_ids = torch.stack([torch.tensor(item["input_ids"]) for item in batch])
+        attention_mask = torch.stack([torch.tensor(item["attention_mask"]) for item in batch])
+        answer_texts = [item["answer_text"] for item in batch]
+        
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "answer_text": answer_texts
+        }
+    
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
         # Get device from model
         device = next(base_model.parameters()).device
@@ -462,11 +479,17 @@ def create_evaluation_fn_for_llm(
                 shuffle=False,
             )
             data_loader = DataLoader(
-                tokenized_dataset, batch_size=batch_size, sampler=sampler
+                tokenized_dataset, 
+                batch_size=batch_size, 
+                sampler=sampler,
+                collate_fn=collate_fn
             )
         else:
             data_loader = DataLoader(
-                tokenized_dataset, batch_size=batch_size, shuffle=False
+                tokenized_dataset, 
+                batch_size=batch_size, 
+                shuffle=False,
+                collate_fn=collate_fn
             )
 
         local_scores = []
@@ -784,13 +807,8 @@ def run_natural_niches_sparsity_aware(
         .select(range(50))
         .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
-    # 只将input_ids和attention_mask转为torch，answer_text保持字符串
-    tokenized_train_dataset.set_format(
-        type="torch", columns=["input_ids", "attention_mask"]
-    )
-    tokenized_test_dataset.set_format(
-        type="torch", columns=["input_ids", "attention_mask"]
-    )
+    # 不使用set_format，保持原始格式
+    # DataLoader会自动将input_ids等转为tensor，answer_text保持为字符串列表
     
     num_tasks = len(tokenized_train_dataset)
 
