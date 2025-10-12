@@ -407,6 +407,9 @@ def create_evaluation_fn_for_llm(
     device = next(base_model.parameters()).device
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
+        # Get device from model
+        device = next(base_model.parameters()).device
+        
         # Restore parameters into the raw model (not the DDP wrapper)
         # The DDP wrapper will automatically sync the updated weights.
         restored_model = jax_flattened_to_pytorch_model(
