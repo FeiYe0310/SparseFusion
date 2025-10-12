@@ -285,16 +285,23 @@ def prune_model_weights(
             # 对每个线性层的权重进行剪枝
             for name in subset:
                 W = subset[name].weight.data
+                original_dtype = W.dtype
+                
+                # 转换为float32进行计算（避免bfloat16不支持的操作）
+                W_float = W.float()
                 
                 # 计算magnitude
-                W_metric = torch.abs(W)
+                W_metric = torch.abs(W_float)
                 
                 # 计算阈值（unstructured pruning）
                 thresh = torch.sort(W_metric.flatten())[0][int(W.numel() * sparsity_ratio)]
                 
                 # 应用剪枝
                 W_mask = (W_metric <= thresh)
-                W[W_mask] = 0
+                W_float[W_mask] = 0
+                
+                # 转回原始dtype
+                subset[name].weight.data = W_float.to(original_dtype)
     
     return pytorch_model
 
