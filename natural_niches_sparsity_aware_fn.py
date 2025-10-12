@@ -217,15 +217,17 @@ def compute_total_scores(
 
 def prune_magnitude(
     jax_flat_params: jnp.ndarray,
-    sparsity_ratio: float
+    sparsity_ratio: float,
+    sample_size: int = 10000
 ) -> jnp.ndarray:
     """
-    简单的Magnitude剪枝：直接基于参数绝对值大小
-    不需要校准数据，速度快
+    快速Magnitude剪枝：使用采样估计阈值
+    不需要排序整个数组，速度快
     
     Args:
         jax_flat_params: JAX扁平化参数数组
         sparsity_ratio: 目标稀疏度 (0.0-1.0)
+        sample_size: 采样大小（用于估计阈值）
     
     Returns:
         剪枝后的JAX参数数组
@@ -236,12 +238,20 @@ def prune_magnitude(
     # 保存原始dtype
     original_dtype = jax_flat_params.dtype
     
-    # 转换为float32进行计算（JAX的percentile在bfloat16上也可能有问题）
+    # 转换为float32进行计算
     params_float = jax_flat_params.astype(jnp.float32)
-    
-    # 计算阈值
     abs_params = jnp.abs(params_float)
-    threshold = jnp.percentile(abs_params, sparsity_ratio * 100)
+    
+    # 快速方法：采样估计阈值（避免对全部参数排序）
+    total_size = abs_params.size
+    if total_size > sample_size:
+        # 随机采样一部分参数来估计阈值
+        sample_indices = jnp.linspace(0, total_size-1, sample_size, dtype=jnp.int32)
+        sampled_abs = abs_params.flatten()[sample_indices]
+        threshold = jnp.percentile(sampled_abs, sparsity_ratio * 100)
+    else:
+        # 参数量小，直接计算
+        threshold = jnp.percentile(abs_params, sparsity_ratio * 100)
     
     # 剪枝：小于阈值的设为0
     pruned_params = jnp.where(abs_params < threshold, 0.0, params_float)
@@ -294,21 +304,20 @@ def prune_model_weights(
                 original_dtype = W.dtype
                 original_device = W.device
                 
-                # 转换为float32并移到CPU进行计算（避免bfloat16不支持的操作）
-                W_float = W.float().cpu()
+                # 转换到numpy进行计算（完全避免PyTorch的bfloat16限制）
+                W_np = W.cpu().numpy().astype(np.float32)
                 
                 # 计算magnitude
-                W_metric = torch.abs(W_float)
+                W_metric = np.abs(W_np)
                 
-                # 计算阈值（unstructured pruning）
-                thresh = torch.sort(W_metric.flatten())[0][int(W.numel() * sparsity_ratio)]
+                # 计算阈值（使用numpy的percentile，避免sort）
+                thresh = np.percentile(W_metric, sparsity_ratio * 100)
                 
                 # 应用剪枝
-                W_mask = (W_metric <= thresh)
-                W_float[W_mask] = 0
+                W_np[W_metric <= thresh] = 0
                 
-                # 转回原始dtype和device
-                subset[name].weight.data = W_float.to(dtype=original_dtype, device=original_device)
+                # 转回torch tensor，恢复原始dtype和device
+                subset[name].weight.data = torch.from_numpy(W_np).to(dtype=original_dtype, device=original_device)
     
     return pytorch_model
 
@@ -873,18 +882,26 @@ def run_natural_niches_sparsity_aware(
                         parents_bf16[1].astype(jnp.float32),
                     )
                     
-                    # 2. Apply magnitude pruning to parents (NEW)
-                    # 使用纯JAX的magnitude剪枝，避免PyTorch转换
+                    # 2. Apply pruning to parents (NEW)
+                    # 使用PyTorch+NumPy的剪枝方案（已修复bfloat16问题）
                     if enable_pruning:
                         try:
                             parents_f32 = (
-                                prune_magnitude(
+                                prune_with_wanda(
                                     parents_f32[0].astype(jnp.bfloat16),
-                                    pruning_sparsity
+                                    model_skeleton,
+                                    param_shapes,
+                                    tokenizer,
+                                    pruning_sparsity,
+                                    device
                                 ).astype(jnp.float32),
-                                prune_magnitude(
+                                prune_with_wanda(
                                     parents_f32[1].astype(jnp.bfloat16),
-                                    pruning_sparsity
+                                    model_skeleton,
+                                    param_shapes,
+                                    tokenizer,
+                                    pruning_sparsity,
+                                    device
                                 ).astype(jnp.float32),
                             )
                         except Exception as e:
