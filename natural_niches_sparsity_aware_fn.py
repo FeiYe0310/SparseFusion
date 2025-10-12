@@ -421,6 +421,9 @@ def create_evaluation_fn_for_llm(
     device = next(base_model.parameters()).device
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
+        # Get device from model
+        device = next(base_model.parameters()).device
+        
         # Restore parameters into the raw model (not the DDP wrapper)
         # The DDP wrapper will automatically sync the updated weights.
         restored_model = jax_flattened_to_pytorch_model(
@@ -474,11 +477,15 @@ def create_evaluation_fn_for_llm(
         local_results_tensor = torch.cat(local_scores)
 
         if distributed:
+            # Move to GPU for NCCL backend
+            local_results_tensor = local_results_tensor.to(device)
             gathered_tensors = [
                 torch.empty_like(local_results_tensor) for _ in range(world_size)
             ]
             dist.all_gather(gathered_tensors, local_results_tensor)
             full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
+            # Move back to CPU for numpy conversion
+            full_results_tensor = full_results_tensor.cpu()
         else:
             full_results_tensor = local_results_tensor[: len(tokenized_dataset)]
 
@@ -961,7 +968,11 @@ def run_natural_niches_sparsity_aware(
                     else:
                         child_tensor = torch.empty(num_params_llm, dtype=torch.float32)
 
+                    # Move to GPU for NCCL backend
+                    child_tensor = child_tensor.to(device)
                     dist.broadcast(child_tensor, src=0)
+                    # Move back to CPU for numpy conversion
+                    child_tensor = child_tensor.cpu()
                     child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
                 else:
                     child_bf16 = child_bf16_main
@@ -997,7 +1008,11 @@ def run_natural_niches_sparsity_aware(
                                     num_params_llm, dtype=torch.float32
                                 )
 
+                            # Move to GPU for NCCL backend
+                            params_tensor = params_tensor.to(device)
                             dist.broadcast(params_tensor, src=0)
+                            # Move back to CPU for numpy conversion
+                            params_tensor = params_tensor.cpu()
                             params_bf16 = jnp.array(params_tensor.numpy()).astype(
                                 jnp.bfloat16
                             )
