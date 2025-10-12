@@ -190,6 +190,9 @@ def compute_total_scores(
     """
     计算总分 = ω×Fitness + β×Sparsity
     
+    **重要惩罚机制**: 对稀疏度 > 0.5 的个体给予极低分数（-1e6），
+    确保它们会被优先替换掉，避免archive被全0个体占据。
+    
     Args:
         archive: 档案参数矩阵
         scores: 性能得分矩阵
@@ -201,12 +204,23 @@ def compute_total_scores(
         epsilon: 零参数阈值
     
     Returns:
-        总分 (pop_size,)
+        总分 (pop_size,) - 过于稀疏的个体会得到极低分
     """
+    pop_size = archive.shape[0]
+    
+    # 计算每个个体的稀疏度
+    sparsities = jnp.array([compute_sparsity(archive[i], epsilon) for i in range(pop_size)])
+    
+    # 计算正常的fitness和sparsity scores
     fitness = compute_normalized_fitness(scores, alpha, num_tasks)
     sparsity_scores = compute_sparsity_scores(archive, tau, epsilon)
     
+    # 计算总分
     total = omega * fitness + beta * sparsity_scores
+    
+    # 惩罚机制：稀疏度 > 0.5 的个体给予极低分数
+    penalty_mask = sparsities > 0.5
+    total = jnp.where(penalty_mask, -1e6, total)
     
     return total
 
@@ -407,9 +421,6 @@ def create_evaluation_fn_for_llm(
     device = next(base_model.parameters()).device
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
-        # Get device from model
-        device = next(base_model.parameters()).device
-        
         # Restore parameters into the raw model (not the DDP wrapper)
         # The DDP wrapper will automatically sync the updated weights.
         restored_model = jax_flattened_to_pytorch_model(
@@ -463,16 +474,11 @@ def create_evaluation_fn_for_llm(
         local_results_tensor = torch.cat(local_scores)
 
         if distributed:
-            # Move tensor to GPU for NCCL backend
-            device = next(base_model.parameters()).device
-            local_results_tensor = local_results_tensor.to(device)
             gathered_tensors = [
                 torch.empty_like(local_results_tensor) for _ in range(world_size)
             ]
             dist.all_gather(gathered_tensors, local_results_tensor)
             full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
-            # Move back to CPU for numpy conversion
-            full_results_tensor = full_results_tensor.cpu()
         else:
             full_results_tensor = local_results_tensor[: len(tokenized_dataset)]
 
@@ -955,11 +961,7 @@ def run_natural_niches_sparsity_aware(
                     else:
                         child_tensor = torch.empty(num_params_llm, dtype=torch.float32)
 
-                    # Move to GPU for NCCL backend
-                    child_tensor = child_tensor.to(device)
                     dist.broadcast(child_tensor, src=0)
-                    # Move back to CPU for numpy conversion
-                    child_tensor = child_tensor.cpu()
                     child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
                 else:
                     child_bf16 = child_bf16_main
@@ -995,11 +997,7 @@ def run_natural_niches_sparsity_aware(
                                     num_params_llm, dtype=torch.float32
                                 )
 
-                            # Move to GPU for NCCL backend
-                            params_tensor = params_tensor.to(device)
                             dist.broadcast(params_tensor, src=0)
-                            # Move back to CPU for numpy conversion
-                            params_tensor = params_tensor.cpu()
                             params_bf16 = jnp.array(params_tensor.numpy()).astype(
                                 jnp.bfloat16
                             )
