@@ -54,17 +54,21 @@ ARCHIVE_BACKEND="${ARCHIVE_BACKEND:-gpu}"
 
 # ============================================================================
 # Baseline Parameters (无sparsity-aware)
+# 默认值，可通过命令行参数覆盖
 # ============================================================================
-MODEL1="models/Qwen2.5-0.5B-Instruct"
-MODEL2="models/Qwen2.5-Coder-0.5B-Instruct"
-POP_SIZE=10
-TOTAL_FORWARD_PASSES=20
-OUTPUT_DIR="results/baseline"
+MODEL1="${MODEL1:-models/Qwen2.5-0.5B-Instruct}"
+MODEL2="${MODEL2:-models/Qwen2.5-Coder-0.5B-Instruct}"
+POP_SIZE="${POP_SIZE:-10}"
+TOTAL_FORWARD_PASSES="${TOTAL_FORWARD_PASSES:-3000}"
+OUTPUT_DIR="${OUTPUT_DIR:-results/baseline}"
 
-# 关键：baseline设置
+# 关键：baseline设置（固定值，确保baseline一致性）
 OMEGA=1.0           # 100% fitness权重
 BETA=0.0            # 0% sparsity权重 (不考虑稀疏性)
 PRUNING_SPARSITY=0.0  # 不剪枝
+
+# 捕获所有命令行参数
+MAIN_ARGS=("$@")
 
 # ============================================================================
 # Launch
@@ -93,29 +97,19 @@ if (( GPUS_PER_NODE > 1 )); then
         --standalone \
         --nproc_per_node="${GPUS_PER_NODE}" \
         main_sparsity_aware.py \
-        --model1_path "${MODEL1}" \
-        --model2_path "${MODEL2}" \
-        --pop_size ${POP_SIZE} \
-        --total_forward_passes ${TOTAL_FORWARD_PASSES} \
         --omega ${OMEGA} \
         --beta ${BETA} \
         --pruning_sparsity ${PRUNING_SPARSITY} \
-        --output_dir "${OUTPUT_DIR}" \
-        --log_sparsity_stats \
         --archive_backend "${ARCHIVE_BACKEND}" \
-        --distributed
+        --distributed \
+        "${MAIN_ARGS[@]}"
 else
     echo "[Baseline] Launching single-process python run"
     exec python main_sparsity_aware.py \
-        --model1_path "${MODEL1}" \
-        --model2_path "${MODEL2}" \
-        --pop_size ${POP_SIZE} \
-        --total_forward_passes ${TOTAL_FORWARD_PASSES} \
         --omega ${OMEGA} \
         --beta ${BETA} \
         --pruning_sparsity ${PRUNING_SPARSITY} \
-        --output_dir "${OUTPUT_DIR}" \
-        --log_sparsity_stats \
-        --archive_backend "${ARCHIVE_BACKEND}"
+        --archive_backend "${ARCHIVE_BACKEND}" \
+        "${MAIN_ARGS[@]}"
 fi
 
