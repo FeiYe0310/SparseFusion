@@ -215,6 +215,37 @@ def compute_total_scores(
 # WANDA PRUNING INTEGRATION (NEW)
 # ==============================================================================
 
+def prune_magnitude(
+    jax_flat_params: jnp.ndarray,
+    sparsity_ratio: float
+) -> jnp.ndarray:
+    """
+    简单的Magnitude剪枝：直接基于参数绝对值大小
+    不需要校准数据，速度快
+    
+    Args:
+        jax_flat_params: JAX扁平化参数数组
+        sparsity_ratio: 目标稀疏度 (0.0-1.0)
+    
+    Returns:
+        剪枝后的JAX参数数组
+    """
+    if sparsity_ratio <= 0.0:
+        return jax_flat_params
+    
+    # 计算阈值
+    abs_params = jnp.abs(jax_flat_params)
+    threshold = jnp.percentile(abs_params, sparsity_ratio * 100)
+    
+    # 剪枝：小于阈值的设为0
+    pruned_params = jnp.where(abs_params < threshold, 0.0, jax_flat_params)
+    
+    # 计算实际稀疏度
+    actual_sparsity = (pruned_params == 0).sum() / pruned_params.size
+    
+    return pruned_params
+
+
 def prune_with_wanda(
     jax_flat_params: jnp.ndarray,
     model_skeleton: torch.nn.Module,
@@ -226,6 +257,7 @@ def prune_with_wanda(
 ) -> jnp.ndarray:
     """
     使用Wanda剪枝工具对JAX参数进行剪枝
+    如果Wanda失败，自动降级到magnitude剪枝
     
     流程：
     1. JAX flat params → PyTorch model
@@ -270,17 +302,19 @@ def prune_with_wanda(
     # 步骤3: 应用Wanda剪枝
     try:
         prune_wanda(args, pytorch_model, tokenizer, device, prune_n=0, prune_m=0)
+        
+        # 步骤4: 转回JAX参数
+        pruned_params = []
+        for param in pytorch_model.parameters():
+            pruned_params.append(param.detach().cpu().numpy().flatten())
+        
+        return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
+        
     except Exception as e:
-        print(f"⚠️  Wanda pruning failed: {e}. Skipping pruning for this iteration.")
-        # 如果剪枝失败，返回原始参数
-        return jax_flat_params
-    
-    # 步骤4: 转回JAX参数
-    pruned_params = []
-    for param in pytorch_model.parameters():
-        pruned_params.append(param.detach().cpu().numpy().flatten())
-    
-    return jnp.array(np.concatenate(pruned_params)).astype(jnp.bfloat16)
+        print(f"⚠️  Wanda pruning failed: {e}")
+        print(f"🔄 Falling back to magnitude pruning...")
+        # 降级到magnitude剪枝
+        return prune_magnitude(jax_flat_params, sparsity_ratio)
 
 
 # ==============================================================================
