@@ -955,7 +955,11 @@ def run_natural_niches_sparsity_aware(
                     else:
                         child_tensor = torch.empty(num_params_llm, dtype=torch.float32)
 
+                    # Move to GPU for NCCL backend
+                    child_tensor = child_tensor.to(device)
                     dist.broadcast(child_tensor, src=0)
+                    # Move back to CPU for numpy conversion
+                    child_tensor = child_tensor.cpu()
                     child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
                 else:
                     child_bf16 = child_bf16_main
@@ -991,7 +995,11 @@ def run_natural_niches_sparsity_aware(
                                     num_params_llm, dtype=torch.float32
                                 )
 
+                            # Move to GPU for NCCL backend
+                            params_tensor = params_tensor.to(device)
                             dist.broadcast(params_tensor, src=0)
+                            # Move back to CPU for numpy conversion
+                            params_tensor = params_tensor.cpu()
                             params_bf16 = jnp.array(params_tensor.numpy()).astype(
                                 jnp.bfloat16
                             )
