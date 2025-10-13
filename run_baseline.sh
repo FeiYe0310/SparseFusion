@@ -97,18 +97,28 @@ if (( GPUS_PER_NODE > 1 )); then
         --standalone \
         --nproc_per_node="${GPUS_PER_NODE}" \
         main_sparsity_aware.py \
+        --model1_path "${MODEL1}" \
+        --model2_path "${MODEL2}" \
+        --pop_size ${POP_SIZE} \
+        --total_forward_passes ${TOTAL_FORWARD_PASSES} \
         --omega ${OMEGA} \
         --beta ${BETA} \
         --pruning_sparsity ${PRUNING_SPARSITY} \
+        --output_dir "${OUTPUT_DIR}" \
         --archive_backend "${ARCHIVE_BACKEND}" \
         --distributed \
         "${MAIN_ARGS[@]}"
 else
     echo "[Baseline] Launching single-process python run"
     exec python main_sparsity_aware.py \
+        --model1_path "${MODEL1}" \
+        --model2_path "${MODEL2}" \
+        --pop_size ${POP_SIZE} \
+        --total_forward_passes ${TOTAL_FORWARD_PASSES} \
         --omega ${OMEGA} \
         --beta ${BETA} \
         --pruning_sparsity ${PRUNING_SPARSITY} \
+        --output_dir "${OUTPUT_DIR}" \
         --archive_backend "${ARCHIVE_BACKEND}" \
         "${MAIN_ARGS[@]}"
 fi
