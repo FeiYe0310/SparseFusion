@@ -808,10 +808,10 @@ def run_natural_niches_sparsity_aware(
         
         return model_inputs
 
-    # 训练和测试都只使用前50个样本，加快评估速度
+    # 训练集：前1319个样本；测试集：前50个样本（快速评估）
     tokenized_train_dataset = (
         dataset["train"]
-        .select(range(50))
+        .select(range(1319))
         .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
     tokenized_test_dataset = (
