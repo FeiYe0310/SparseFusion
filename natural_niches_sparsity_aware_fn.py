@@ -25,6 +25,7 @@ from typing import Callable
 import os
 import math
 import sys
+import pickle
 from contextlib import nullcontext
 
 # Add current directory to path for importing lib/ module
@@ -93,10 +94,16 @@ def _init_distributed_if_needed() -> tuple[int, int]:
     if not backend:
         backend = "nccl" if torch.cuda.is_available() else "gloo"
 
+    # Set a very long timeout (7 days) to prevent NCCL timeout errors
+    # Default is 10 minutes (600s), which is too short for long computations
+    from datetime import timedelta
+    timeout = timedelta(days=7)
+
     dist.init_process_group(
         backend=backend,
         rank=rank,
         world_size=world_size,
+        timeout=timeout,
     )
 
     return rank, world_size
@@ -987,6 +994,10 @@ def run_natural_niches_sparsity_aware(
 
                 # --- Child Generation (Main Process Only) ---
                 if is_main_process:
+                    # Monitor JAX computation time to detect hangs
+                    import time
+                    start_time = time.time()
+                    
                     # 1. Select parents based on Total Score
                     parents_bf16 = sample_parents_with_sparsity(
                         archive, scores, k1, alpha, num_tasks, omega, beta, tau, use_matchmaker, epsilon
@@ -995,6 +1006,11 @@ def run_natural_niches_sparsity_aware(
                         parents_bf16[0].astype(jnp.float32),
                         parents_bf16[1].astype(jnp.float32),
                     )
+                    
+                    # Check if JAX computation is taking too long
+                    jax_time = time.time() - start_time
+                    if jax_time > 60:  # Warning if JAX computation takes >60 seconds
+                        print(f"⚠️  WARNING: JAX parent selection took {jax_time:.1f}s (may cause timeout)")
                     
                     # 2. Apply pruning to parents (NEW)
                     # 使用PyTorch+NumPy的剪枝方案（已修复bfloat16问题）
@@ -1091,6 +1107,14 @@ def run_natural_niches_sparsity_aware(
                         }
                         results[run]["iterations"].append(iteration_stats)
 
+                # --- GPU Memory Cleanup (Every 100 steps to prevent memory leak) ---
+                if (i + 1) % 100 == 0:
+                    if is_main_process:
+                        print(f"[Step {i+1}] Cleaning GPU memory...")
+                    torch.cuda.empty_cache()
+                    if dist_enabled:
+                        dist.barrier()  # Ensure all processes clean memory together
+
                 if dist_enabled:
                     dist.barrier()
 
@@ -1152,6 +1176,30 @@ def run_natural_niches_sparsity_aware(
                                 "sparsity": float(compute_sparsity(params_bf16, epsilon)) if log_sparsity_stats else None
                             }
                             results[run]["test_evaluations"].append(test_eval_stats)
+
+                # --- Periodic Checkpoint Save (Every 500 steps to prevent data loss) ---
+                if (i + 1) % 500 == 0 and is_main_process:
+                    from datetime import datetime
+                    checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
+                    os.makedirs(checkpoint_dir, exist_ok=True)
+                    
+                    checkpoint_path = os.path.join(
+                        checkpoint_dir, 
+                        f"checkpoint_run{run+1}_step{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                    )
+                    
+                    checkpoint_data = {
+                        "iteration": i + 1,
+                        "run": run + 1,
+                        "archive": np.array(archive),
+                        "scores": np.array(scores),
+                        "results": results,
+                    }
+                    
+                    with open(checkpoint_path, "wb") as f:
+                        pickle.dump(checkpoint_data, f)
+                    
+                    print(f"💾 Checkpoint saved: {checkpoint_path}")
 
         if dist_enabled:
             dist.barrier()
