@@ -1177,8 +1177,8 @@ def run_natural_niches_sparsity_aware(
                             }
                             results[run]["test_evaluations"].append(test_eval_stats)
 
-                # --- Periodic Checkpoint Save (Every 500 steps to prevent data loss) ---
-                if (i + 1) % 500 == 0 and is_main_process:
+                # --- Periodic Checkpoint Save (Every 50 steps to prevent data loss) ---
+                if (i + 1) % 50 == 0 and is_main_process:
                     from datetime import datetime
                     checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
                     os.makedirs(checkpoint_dir, exist_ok=True)
