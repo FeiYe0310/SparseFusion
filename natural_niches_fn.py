@@ -13,6 +13,7 @@ from datasets import load_from_disk
 from typing import Callable
 import os
 import math
+import pickle
 from contextlib import nullcontext
 
 try:
@@ -86,6 +87,27 @@ def _init_distributed_if_needed() -> tuple[int, int]:
     return rank, world_size
 
 
+def extract_answer(text: str) -> str:
+    """
+    从GSM8K生成的文本中提取数字答案
+    GSM8K的标准格式：答案在####后面
+    """
+    import re
+    
+    # 尝试找到####后的答案
+    if '####' in text:
+        answer = text.split('####')[-1].strip()
+    else:
+        # 如果没有####，尝试提取最后一个数字
+        answer = text.strip()
+    
+    # 提取数字（可能带逗号、小数点）
+    numbers = re.findall(r'-?\d+(?:,\d{3})*(?:\.\d+)?', answer.replace(',', ''))
+    if numbers:
+        return numbers[-1]  # 返回最后一个数字
+    return ""
+
+
 def create_evaluation_fn_for_llm(
     model_skeleton: torch.nn.Module,
     param_shapes: list,
@@ -97,17 +119,40 @@ def create_evaluation_fn_for_llm(
     rank: int = 0,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """
-    Creates an evaluation function for a given LLM.
-    Handles unflattening and batched, distributed evaluation.
+    Creates an evaluation function for GSM8K using **generation + exact match**.
+    
+    真实评估流程：
+    1. 模型生成完整答案（使用 model.generate()）
+    2. 从生成的文本中提取数字答案
+    3. 与ground truth进行精确匹配
     """
     base_model = (
         model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
     )
     device = next(base_model.parameters()).device
 
+    def collate_fn(batch):
+        """
+        自定义collate函数：
+        - input_ids, attention_mask -> stack成tensor
+        - answer_text -> 保持为字符串列表
+        """
+        import torch
+        input_ids = torch.stack([torch.tensor(item["input_ids"]) for item in batch])
+        attention_mask = torch.stack([torch.tensor(item["attention_mask"]) for item in batch])
+        answer_texts = [item["answer_text"] for item in batch]
+        
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "answer_text": answer_texts
+        }
+    
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
+        # Get device from model
+        device = next(base_model.parameters()).device
+        
         # Restore parameters into the raw model (not the DDP wrapper)
-        # The DDP wrapper will automatically sync the updated weights.
         restored_model = jax_flattened_to_pytorch_model(
             flat_params, base_model, param_shapes
         )
@@ -119,51 +164,75 @@ def create_evaluation_fn_for_llm(
                 tokenized_dataset,
                 num_replicas=world_size,
                 rank=rank,
-                shuffle=False,  # Keep order for consistent scoring
+                shuffle=False,
             )
             data_loader = DataLoader(
-                tokenized_dataset, batch_size=batch_size, sampler=sampler
+                tokenized_dataset, 
+                batch_size=batch_size, 
+                sampler=sampler,
+                collate_fn=collate_fn
             )
         else:
             data_loader = DataLoader(
-                tokenized_dataset, batch_size=batch_size, shuffle=False
+                tokenized_dataset, 
+                batch_size=batch_size, 
+                shuffle=False,
+                collate_fn=collate_fn
             )
 
         local_scores = []
         with torch.no_grad():
             for batch in data_loader:
                 input_ids = batch["input_ids"].to(device)
-                labels = batch["labels"].to(device)
-
-                outputs = restored_model(input_ids=input_ids, labels=labels)
-                logits = outputs.logits
-
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
-                predictions = torch.argmax(shift_logits, dim=-1)
-                mask = shift_labels != -100
-                correct_tokens = (predictions == shift_labels) & mask
-
-                total_correct = correct_tokens.sum(dim=1)
-                total_valid = mask.sum(dim=1)
-
-                accuracy_per_sequence = (
-                    total_correct.float() / total_valid.float().clamp(min=1)
+                # 原始答案文本（用于提取ground truth）
+                answer_texts = batch["answer_text"]
+                
+                # 生成答案（最多256个token，保证完整推理过程）
+                generated_ids = restored_model.generate(
+                    input_ids,
+                    max_new_tokens=256,
+                    do_sample=False,  # 贪婪解码，保证可重复
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
                 )
-                local_scores.append(accuracy_per_sequence.cpu())
+                
+                # 解码生成的文本
+                generated_texts = tokenizer.batch_decode(
+                    generated_ids[:, input_ids.shape[1]:],  # 只要新生成的部分
+                    skip_special_tokens=True
+                )
+                
+                # 对比预测答案和ground truth
+                batch_scores = []
+                for gen_text, gt_text in zip(generated_texts, answer_texts):
+                    # 从生成文本提取预测答案
+                    pred_answer = extract_answer(gen_text)
+                    
+                    # 从ground truth文本提取答案
+                    gt_answer = extract_answer(gt_text)
+                    
+                    # 精确匹配
+                    is_correct = (pred_answer == gt_answer) and (pred_answer != "")
+                    batch_scores.append(1.0 if is_correct else 0.0)
+                
+                local_scores.extend(batch_scores)
 
         if not local_scores:
             return jnp.zeros(len(tokenized_dataset))
 
-        # Gather results across processes when running distributed
-        local_results_tensor = torch.cat(local_scores)
+        # 转为tensor
+        local_results_tensor = torch.tensor(local_scores, dtype=torch.float32)
 
         if distributed:
+            # Move to GPU for NCCL backend
+            local_results_tensor = local_results_tensor.to(device)
             gathered_tensors = [
                 torch.empty_like(local_results_tensor) for _ in range(world_size)
             ]
             dist.all_gather(gathered_tensors, local_results_tensor)
             full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
+            # Move back to CPU for numpy conversion
+            full_results_tensor = full_results_tensor.cpu()
         else:
             full_results_tensor = local_results_tensor[: len(tokenized_dataset)]
 
@@ -311,12 +380,26 @@ def run_natural_niches(
     # Path is now imported from the global config file.
     dataset = load_from_disk(GSM8K_DIR)
 
+    # 为decoder-only模型设置left padding
+    tokenizer.padding_side = 'left'
+    
     def preprocess_function(examples):
-        inputs = [q + " " + a for q, a in zip(examples["question"], examples["answer"])]
+        """
+        为真实GSM8K评估准备数据：
+        - input_ids: 只包含问题（用于model.generate()）
+        - answer_text: 原始答案文本（用于提取ground truth）
+        """
+        # 只tokenize问题部分
         model_inputs = tokenizer(
-            inputs, max_length=256, padding="max_length", truncation=True
+            examples["question"], 
+            max_length=256, 
+            padding="max_length", 
+            truncation=True
         )
-        model_inputs["labels"] = model_inputs["input_ids"].copy()
+        
+        # 保存原始答案文本（不tokenize，后续直接用于提取答案）
+        model_inputs["answer_text"] = examples["answer"]
+        
         return model_inputs
 
     # 快速实验：训练集200样本，测试集50样本
@@ -330,8 +413,6 @@ def run_natural_niches(
         .select(range(50))
         .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
-    tokenized_train_dataset.set_format(type="torch")
-    tokenized_test_dataset.set_format(type="torch")
 
     # --- Evaluation Setup ---
     if is_main_process:
