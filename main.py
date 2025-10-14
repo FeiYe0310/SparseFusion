@@ -52,6 +52,11 @@ def parse_arguments():
         action="store_true",
         help="Use lightweight BERTOverflow checkpoints for debugging.",
     )
+    parser.add_argument(
+        "--use_real_gsm8k_eval",
+        action="store_true",
+        help="Use real GSM8K evaluation (generation + exact match) instead of token accuracy. Slower but accurate.",
+    )
 
     return parser.parse_args()
 

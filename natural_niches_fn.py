@@ -117,14 +117,14 @@ def create_evaluation_fn_for_llm(
     distributed: bool = False,
     world_size: int = 1,
     rank: int = 0,
+    use_real_eval: bool = False,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """
-    Creates an evaluation function for GSM8K using **generation + exact match**.
+    Creates an evaluation function for GSM8K.
     
-    真实评估流程：
-    1. 模型生成完整答案（使用 model.generate()）
-    2. 从生成的文本中提取数字答案
-    3. 与ground truth进行精确匹配
+    评估模式（use_real_eval控制）：
+    - False: Token-level准确率（快速，teacher forcing）
+    - True: Generation + Exact Match（慢但准确，真实评估）
     """
     base_model = (
         model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
@@ -170,58 +170,79 @@ def create_evaluation_fn_for_llm(
                 tokenized_dataset, 
                 batch_size=batch_size, 
                 sampler=sampler,
-                collate_fn=collate_fn
+                collate_fn=collate_fn if use_real_eval else None
             )
         else:
             data_loader = DataLoader(
                 tokenized_dataset, 
                 batch_size=batch_size, 
                 shuffle=False,
-                collate_fn=collate_fn
+                collate_fn=collate_fn if use_real_eval else None
             )
 
         local_scores = []
         with torch.no_grad():
-            for batch in data_loader:
-                input_ids = batch["input_ids"].to(device)
-                # 原始答案文本（用于提取ground truth）
-                answer_texts = batch["answer_text"]
-                
-                # 生成答案（最多256个token，保证完整推理过程）
-                generated_ids = restored_model.generate(
-                    input_ids,
-                    max_new_tokens=256,
-                    do_sample=False,  # 贪婪解码，保证可重复
-                    pad_token_id=tokenizer.pad_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                )
-                
-                # 解码生成的文本
-                generated_texts = tokenizer.batch_decode(
-                    generated_ids[:, input_ids.shape[1]:],  # 只要新生成的部分
-                    skip_special_tokens=True
-                )
-                
-                # 对比预测答案和ground truth
-                batch_scores = []
-                for gen_text, gt_text in zip(generated_texts, answer_texts):
-                    # 从生成文本提取预测答案
-                    pred_answer = extract_answer(gen_text)
+            if use_real_eval:
+                # ===== 真实GSM8K评估：Generation + Exact Match =====
+                for batch in data_loader:
+                    input_ids = batch["input_ids"].to(device)
+                    answer_texts = batch["answer_text"]
                     
-                    # 从ground truth文本提取答案
-                    gt_answer = extract_answer(gt_text)
+                    # 生成答案
+                    generated_ids = restored_model.generate(
+                        input_ids,
+                        max_new_tokens=256,
+                        do_sample=False,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                    )
                     
-                    # 精确匹配
-                    is_correct = (pred_answer == gt_answer) and (pred_answer != "")
-                    batch_scores.append(1.0 if is_correct else 0.0)
-                
-                local_scores.extend(batch_scores)
+                    # 解码生成的文本
+                    generated_texts = tokenizer.batch_decode(
+                        generated_ids[:, input_ids.shape[1]:],
+                        skip_special_tokens=True
+                    )
+                    
+                    # 对比预测答案和ground truth
+                    batch_scores = []
+                    for gen_text, gt_text in zip(generated_texts, answer_texts):
+                        pred_answer = extract_answer(gen_text)
+                        gt_answer = extract_answer(gt_text)
+                        is_correct = (pred_answer == gt_answer) and (pred_answer != "")
+                        batch_scores.append(1.0 if is_correct else 0.0)
+                    
+                    local_scores.extend(batch_scores)
+            else:
+                # ===== Token准确率评估：快速但不准确 =====
+                for batch in data_loader:
+                    input_ids = batch["input_ids"].to(device)
+                    labels = batch["labels"].to(device)
+
+                    outputs = restored_model(input_ids=input_ids, labels=labels)
+                    logits = outputs.logits
+
+                    shift_logits = logits[..., :-1, :].contiguous()
+                    shift_labels = labels[..., 1:].contiguous()
+                    predictions = torch.argmax(shift_logits, dim=-1)
+                    mask = shift_labels != -100
+                    correct_tokens = (predictions == shift_labels) & mask
+
+                    total_correct = correct_tokens.sum(dim=1)
+                    total_valid = mask.sum(dim=1)
+
+                    accuracy_per_sequence = (
+                        total_correct.float() / total_valid.float().clamp(min=1)
+                    )
+                    local_scores.append(accuracy_per_sequence.cpu())
 
         if not local_scores:
             return jnp.zeros(len(tokenized_dataset))
 
         # 转为tensor
-        local_results_tensor = torch.tensor(local_scores, dtype=torch.float32)
+        if use_real_eval:
+            local_results_tensor = torch.tensor(local_scores, dtype=torch.float32)
+        else:
+            local_results_tensor = torch.cat(local_scores)
 
         if distributed:
             # Move to GPU for NCCL backend
@@ -317,6 +338,7 @@ def run_natural_niches(
     model2_path: str = "",
     distributed: bool = False,
     archive_backend: str = "gpu",
+    use_real_gsm8k_eval: bool = False,
 ) -> list:
     archive_backend = archive_backend.lower()
     if archive_backend not in {"gpu", "cpu"}:
@@ -380,25 +402,31 @@ def run_natural_niches(
     # Path is now imported from the global config file.
     dataset = load_from_disk(GSM8K_DIR)
 
-    # 为decoder-only模型设置left padding
-    tokenizer.padding_side = 'left'
+    # 根据评估模式设置padding方式
+    if use_real_gsm8k_eval:
+        tokenizer.padding_side = 'left'  # decoder-only模型generation需要left padding
     
     def preprocess_function(examples):
-        """
-        为真实GSM8K评估准备数据：
-        - input_ids: 只包含问题（用于model.generate()）
-        - answer_text: 原始答案文本（用于提取ground truth）
-        """
-        # 只tokenize问题部分
-        model_inputs = tokenizer(
-            examples["question"], 
-            max_length=256, 
-            padding="max_length", 
-            truncation=True
-        )
-        
-        # 保存原始答案文本（不tokenize，后续直接用于提取答案）
-        model_inputs["answer_text"] = examples["answer"]
+        """数据预处理（根据评估模式不同而不同）"""
+        if use_real_gsm8k_eval:
+            # 真实评估：只tokenize问题，保存答案文本
+            model_inputs = tokenizer(
+                examples["question"], 
+                max_length=256, 
+                padding="max_length", 
+                truncation=True
+            )
+            model_inputs["answer_text"] = examples["answer"]
+        else:
+            # Token准确率：tokenize问题+答案，用于teacher forcing
+            inputs = [q + " " + a for q, a in zip(examples["question"], examples["answer"])]
+            model_inputs = tokenizer(
+                inputs,
+                max_length=256,
+                padding="max_length",
+                truncation=True
+            )
+            model_inputs["labels"] = model_inputs["input_ids"].copy()
         
         return model_inputs
 
@@ -446,6 +474,7 @@ def run_natural_niches(
         distributed=dist_enabled,
         world_size=world_size,
         rank=rank,
+        use_real_eval=use_real_gsm8k_eval,
     )
     test_eval_fn = create_evaluation_fn_for_llm(
         model_skeleton,
@@ -455,6 +484,7 @@ def run_natural_niches(
         distributed=dist_enabled,
         world_size=world_size,
         rank=rank,
+        use_real_eval=use_real_gsm8k_eval,
     )
 
     archive_sharding = None

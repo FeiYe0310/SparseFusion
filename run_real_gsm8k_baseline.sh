@@ -41,7 +41,7 @@ echo "=========================================="
 echo "  真实GSM8K评估版本"
 echo "=========================================="
 echo "模型: $MODEL1"
-echo"      $MODEL2"
+echo "      $MODEL2"
 echo "Archive大小: $POP_SIZE"
 echo "总步数: $TOTAL_PASSES"
 echo "训练集: 200 samples"
@@ -62,6 +62,7 @@ nohup python -u main.py \
   --archive_backend gpu \
   --runs 1 \
   --method natural_niches \
+  --use_real_gsm8k_eval \
   > baseline_real_gsm8k_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 
 PID=$!
