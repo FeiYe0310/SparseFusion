@@ -60,6 +60,7 @@ def main():
     args = parse_arguments()
     args_dict = vars(args)
     method = args_dict.pop("method")
+    debug_models = args_dict.pop("debug_models", False)
     file_name = method
 
     if method == "natural_niches":
@@ -69,11 +70,7 @@ def main():
             file_name += "_no_splitpoint"
         if args.no_matchmaker and not args.no_crossover:
             file_name += "_no_matchmaker"
-        if args.debug_models:
-            args_dict["model1_path"] = "models/MathBERT"
-            args_dict["model2_path"] = "models/BERTOverflow"
-
-        if args.debug_models:
+        if debug_models:
             args_dict["model1_path"] = "models/MathBERT"
             args_dict["model2_path"] = "models/BERTOverflow"
 
@@ -90,7 +87,7 @@ def main():
     elif method == "natural_niches_sharded":
         from natural_niches_sharded import run_natural_niches_sharded
 
-        if args.debug_models:
+        if debug_models:
             args_dict["model1_path"] = "models/BERTOverflow"
             args_dict["model2_path"] = "SparseFusion/models/BERTOverflow"
 
