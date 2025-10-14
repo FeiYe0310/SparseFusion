@@ -441,6 +441,11 @@ def run_natural_niches(
         .select(range(50))
         .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
+    
+    # Token准确率模式需要set_format，真实评估模式用custom collate_fn
+    if not use_real_gsm8k_eval:
+        tokenized_train_dataset.set_format(type="torch")
+        tokenized_test_dataset.set_format(type="torch")
 
     # --- Evaluation Setup ---
     if is_main_process:
@@ -463,6 +468,15 @@ def run_natural_niches(
         model_skeleton.to(torch.bfloat16)
     else:
         model_skeleton.to(torch.bfloat16)
+
+    # 清理generation_config中的无效参数（仅真实评估模式需要）
+    if use_real_gsm8k_eval and hasattr(model_skeleton, 'generation_config'):
+        if hasattr(model_skeleton.generation_config, 'temperature'):
+            model_skeleton.generation_config.temperature = None
+        if hasattr(model_skeleton.generation_config, 'top_p'):
+            model_skeleton.generation_config.top_p = None
+        if hasattr(model_skeleton.generation_config, 'top_k'):
+            model_skeleton.generation_config.top_k = None
 
     model_skeleton.eval()
 
