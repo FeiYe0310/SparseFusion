@@ -794,3 +794,128 @@ def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):
         return jnp.zeros(tuple(slice_dims), dtype=dtype)
 
     return make_array_from_callback(shape, sharding, _cb)
+
+                    )
+
+                # Barrier to ensure archive update is complete before the next iteration
+                if dist_enabled:
+                    dist.barrier()
+
+                # --- Periodic Full Archive Evaluation ---
+                # Every 10 forward passes, evaluate all models currently in the archive.
+                if (i + 1) % 10 == 0:
+                    if is_main_process:
+                        print(
+                            f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
+                        )
+
+                    # This loop runs on all processes to keep them in sync for broadcasts.
+                    for j in range(pop_size):
+                        if dist_enabled:
+                            # 1. Main process gets the individual parameters for broadcast.
+                            if is_main_process:
+                                individual_params = archive[j]
+                                params_tensor = torch.from_numpy(
+                                    np.array(individual_params.astype(jnp.float32))
+                                )
+                            else:
+                                # Workers prepare an empty tensor.
+                                params_tensor = torch.empty(
+                                    num_params_llm, dtype=torch.float32
+                                )
+
+                            # 2. Broadcast the parameters from main process to all workers.
+                            dist.broadcast(params_tensor, src=0)
+
+                            # 3. All processes convert the tensor back to a JAX array.
+                            params_bf16 = jnp.array(params_tensor.numpy()).astype(
+                                jnp.bfloat16
+                            )
+                        else:
+                            params_bf16 = archive[j]
+
+                        # 4. All processes evaluate the model on the test set.
+                        test_scores_vector = test_eval_fn(params_bf16)
+
+                        # 5. The main process calculates and prints the result.
+                        if is_main_process:
+                            acc = jnp.mean(test_scores_vector)
+                            # We can also log this to the results dictionary if needed
+                            # For now, just printing for clear visibility.
+                            print(
+                                f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
+                            )
+
+                # --- Periodic Checkpoint Save (Every 50 steps to prevent data loss) ---
+                if (i + 1) % 50 == 0 and is_main_process:
+                    from datetime import datetime
+                    checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
+                    os.makedirs(checkpoint_dir, exist_ok=True)
+                    
+                    checkpoint_path = os.path.join(
+                        checkpoint_dir, 
+                        f"checkpoint_baseline_run{run+1}_step{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                    )
+                    
+                    checkpoint_data = {
+                        "iteration": i + 1,
+                        "run": run + 1,
+                        "archive": np.array(archive),
+                        "scores": np.array(scores),
+                        "results": results,
+                    }
+                    
+                    with open(checkpoint_path, "wb") as f:
+                        pickle.dump(checkpoint_data, f)
+                    
+                    print(f"💾 Checkpoint saved: {checkpoint_path}")
+
+                if dist_enabled:
+                    dist.barrier()
+
+        # Final barrier to ensure all processes finish before main process returns
+        if dist_enabled:
+            dist.barrier()
+
+        # --- Save the final best model (main process only) ---
+        if is_main_process:
+            if runs > 0:
+                # Find the best parameters from the final archive state of the last run
+                train_fitness = scores.mean(axis=1)
+                best_individual_idx = jnp.argmax(train_fitness)
+                best_params = archive[best_individual_idx]
+
+                # Directory path is now imported from the global config file.
+                os.makedirs(RESULTS_DIR, exist_ok=True)
+
+                # Save the best parameters to a file
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = os.path.join(
+                    RESULTS_DIR, f"best_model_run_{run+1}_{timestamp}.npz"
+                )
+
+                print(f"\n🏆 Saving the best model from the last run to: {save_path}")
+                jnp.savez(save_path, params=best_params)
+                print("✅ Model saved successfully.")
+
+        return results
+
+
+def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):
+    if sharding is None or make_array_from_callback is None:
+        return jnp.zeros(shape, dtype=dtype)
+
+    def _cb(index):
+        slice_dims = []
+        for dim_idx, dim_size in zip(index, shape):
+            if isinstance(dim_idx, slice):
+                start = 0 if dim_idx.start is None else dim_idx.start
+                stop = dim_size if dim_idx.stop is None else dim_idx.stop
+                slice_dims.append(stop - start)
+            else:
+                slice_dims.append(1)
+        return jnp.zeros(tuple(slice_dims), dtype=dtype)
+
+    return make_array_from_callback(shape, sharding, _cb)

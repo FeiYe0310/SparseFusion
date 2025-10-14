@@ -436,6 +436,7 @@ def create_evaluation_fn_for_llm(
     distributed: bool = False,
     world_size: int = 1,
     rank: int = 0,
+    eval_subset_size: int = None,  # 每轮评估的样本数（None=使用全部数据）
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """
     Creates an evaluation function for GSM8K using **generation + exact match**.
@@ -444,11 +445,19 @@ def create_evaluation_fn_for_llm(
     1. 模型生成完整答案（使用 model.generate()）
     2. 从生成的文本中提取数字答案
     3. 与ground truth进行精确匹配
+    
+    Args:
+        eval_subset_size: 每轮随机采样的数据点数量（加速评估）
+                         - None: 使用全部数据
+                         - 30: 每轮随机采样30个数据点
     """
     base_model = (
         model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
     )
     device = next(base_model.parameters()).device
+    
+    # 用于生成不同随机采样的迭代计数器
+    iteration_counter = {'count': 0}
 
     def collate_fn(batch):
         """
@@ -477,23 +486,41 @@ def create_evaluation_fn_for_llm(
         )
         restored_model.eval()
 
+        # 【加速】随机采样子集（每轮不同）
+        if eval_subset_size is not None and eval_subset_size < len(tokenized_dataset):
+            # 使用迭代计数器作为随机种子，确保每轮采样不同
+            import random
+            random.seed(iteration_counter['count'])
+            indices = random.sample(range(len(tokenized_dataset)), eval_subset_size)
+            indices.sort()  # 保持顺序，便于调试
+            
+            # 创建subset
+            from torch.utils.data import Subset
+            eval_dataset = Subset(tokenized_dataset, indices)
+            iteration_counter['count'] += 1
+            
+            if rank == 0:
+                print(f"  [Eval] 使用 {eval_subset_size}/{len(tokenized_dataset)} 样本 (iteration {iteration_counter['count']})")
+        else:
+            eval_dataset = tokenized_dataset
+
         # Sampler ensures each GPU gets a different slice of data when distributed
         if distributed:
             sampler = DistributedSampler(
-                tokenized_dataset,
+                eval_dataset,
                 num_replicas=world_size,
                 rank=rank,
                 shuffle=False,
             )
             data_loader = DataLoader(
-                tokenized_dataset, 
+                eval_dataset, 
                 batch_size=batch_size, 
                 sampler=sampler,
                 collate_fn=collate_fn
             )
         else:
             data_loader = DataLoader(
-                tokenized_dataset, 
+                eval_dataset, 
                 batch_size=batch_size, 
                 shuffle=False,
                 collate_fn=collate_fn
@@ -549,13 +576,27 @@ def create_evaluation_fn_for_llm(
                 torch.empty_like(local_results_tensor) for _ in range(world_size)
             ]
             dist.all_gather(gathered_tensors, local_results_tensor)
-            full_results_tensor = torch.cat(gathered_tensors)[: len(tokenized_dataset)]
+            full_results_tensor = torch.cat(gathered_tensors)[: len(eval_dataset)]
             # Move back to CPU for numpy conversion
             full_results_tensor = full_results_tensor.cpu()
         else:
-            full_results_tensor = local_results_tensor[: len(tokenized_dataset)]
+            full_results_tensor = local_results_tensor[: len(eval_dataset)]
 
-        return jnp.array(full_results_tensor.numpy())
+        # 【加速】如果使用子集评估，需要扩展到完整数据集大小
+        if eval_subset_size is not None and eval_subset_size < len(tokenized_dataset):
+            # 策略：用当前子集的平均分数填充其他位置
+            # 这样可以保持Archive的fitness计算正确
+            subset_scores = full_results_tensor.numpy()
+            avg_score = float(subset_scores.mean()) if len(subset_scores) > 0 else 0.0
+            
+            # 创建完整大小的数组，用平均分数初始化
+            full_scores = np.full(len(tokenized_dataset), avg_score, dtype=np.float32)
+            # 将实际评估的位置填入真实分数
+            full_scores[indices] = subset_scores
+            
+            return jnp.array(full_scores)
+        else:
+            return jnp.array(full_results_tensor.numpy())
 
     return evaluation_fn
 
@@ -711,6 +752,7 @@ def run_natural_niches_sparsity_aware(
     distributed: bool = False,
     archive_backend: str = "gpu",
     log_sparsity_stats: bool = False,
+    eval_subset_size: int = None,  # 🚀 NEW: 每轮评估的样本数（加速）
 ) -> list:
     """
     Run Natural Niches with Sparsity-Aware Selection and Wanda Pruning
@@ -723,6 +765,8 @@ def run_natural_niches_sparsity_aware(
         pruning_sparsity: Wanda剪枝目标稀疏度 (default: 0.0 = 不剪枝)
         pruning_method: 剪枝方法 'wanda' 或 'magnitude' (default: 'wanda')
         log_sparsity_stats: 是否记录稀疏度统计 (default: False)
+        eval_subset_size: 每轮评估的样本数 (None=全部数据, 30=随机采样30个)
+                         【加速】可显著减少评估时间
     
     其他参数与原始run_natural_niches相同。
     """
@@ -856,6 +900,7 @@ def run_natural_niches_sparsity_aware(
         distributed=dist_enabled,
         world_size=world_size,
         rank=rank,
+        eval_subset_size=eval_subset_size,  # 🚀 加速：随机采样子集
     )
     test_eval_fn = create_evaluation_fn_for_llm(
         model_skeleton,
@@ -865,6 +910,7 @@ def run_natural_niches_sparsity_aware(
         distributed=dist_enabled,
         world_size=world_size,
         rank=rank,
+        eval_subset_size=None,  # 测试集始终使用全部数据
     )
 
     # --- Archive Sharding Setup (IDENTICAL TO ORIGINAL) ---

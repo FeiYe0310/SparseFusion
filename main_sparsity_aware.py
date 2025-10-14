@@ -61,6 +61,10 @@ def parse_arguments():
                         help="Log detailed sparsity statistics during evolution")
     parser.add_argument("--output_dir", type=str, default="results",
                         help="Output directory for results")
+    
+    # 🚀 加速参数
+    parser.add_argument("--eval_subset_size", type=int, default=None,
+                        help="Number of samples to evaluate per iteration (None=all data, 30=sample 30 points per iter for speedup)")
 
     return parser.parse_args()
 
@@ -75,6 +79,8 @@ def main():
     print(f"Population size: {args.pop_size}")
     print(f"Total forward passes: {args.total_forward_passes}")
     print(f"Runs: {args.runs}")
+    if args.eval_subset_size:
+        print(f"🚀 Eval subset size: {args.eval_subset_size} (加速模式)")
     print(f"\nSparsity-Aware Parameters:")
     print(f"  ω (omega): {args.omega} - Fitness weight")
     print(f"  β (beta): {args.beta} - Sparsity weight")
@@ -124,6 +130,7 @@ def main():
         distributed=args.distributed,
         archive_backend=args.archive_backend,
         log_sparsity_stats=args.log_sparsity_stats,
+        eval_subset_size=args.eval_subset_size,  # 🚀 加速参数
     )
 
     # Save results
