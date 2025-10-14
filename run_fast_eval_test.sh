@@ -21,6 +21,7 @@ echo ""
 
 # 使用eval_subset_size=30进行加速评估
 python3 main_sparsity_aware.py \
+  --runs 1 \
   --model1_path ${MODEL1} \
   --model2_path ${MODEL2} \
   --pop_size 10 \
