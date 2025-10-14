@@ -319,8 +319,11 @@ def run_natural_niches(
         model_inputs["labels"] = model_inputs["input_ids"].copy()
         return model_inputs
 
-    tokenized_train_dataset = dataset["train"].map(
-        preprocess_function, batched=True, remove_columns=["question", "answer"]
+    # 快速实验：训练集200样本，测试集50样本
+    tokenized_train_dataset = (
+        dataset["train"]
+        .select(range(200))
+        .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
     tokenized_test_dataset = (
         dataset["test"]
@@ -592,6 +595,33 @@ def run_natural_niches(
                             print(
                                 f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
                             )
+
+                # --- Periodic Checkpoint Save (Every 50 steps to prevent data loss) ---
+                if (i + 1) % 50 == 0 and is_main_process:
+                    from datetime import datetime
+                    checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
+                    os.makedirs(checkpoint_dir, exist_ok=True)
+                    
+                    checkpoint_path = os.path.join(
+                        checkpoint_dir, 
+                        f"checkpoint_baseline_run{run+1}_step{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                    )
+                    
+                    checkpoint_data = {
+                        "iteration": i + 1,
+                        "run": run + 1,
+                        "archive": np.array(archive),
+                        "scores": np.array(scores),
+                        "results": results,
+                    }
+                    
+                    with open(checkpoint_path, "wb") as f:
+                        pickle.dump(checkpoint_data, f)
+                    
+                    print(f"💾 Checkpoint saved: {checkpoint_path}")
+
+                if dist_enabled:
+                    dist.barrier()
 
         # Final barrier to ensure all processes finish before main process returns
         if dist_enabled:
