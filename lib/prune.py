@@ -430,8 +430,77 @@ def prune_ablate(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         inps, outs = outs, inps
 
     model.config.use_cache = use_cache
+    torch.cuda.empty_cache()            return tmp
+
+        handles = []
+        for name in gpts:
+            handles.append(subset[name].register_forward_hook(add_batch(name)))
+
+        for j in range(args.nsamples):
+            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+        for h in handles:
+            h.remove()
+
+        for name in gpts:
+            print(i, name)
+            print('Pruning ...')
+
+            if args.prune_method == "ablate_wanda_seq":
+                prune_mask = gpts[name].get_wanda_mask(args.sparsity_ratio, prune_n, prune_m)
+            elif args.prune_method == "ablate_mag_seq":
+                prune_mask = gpts[name].get_mag_mask(args.sparsity_ratio, prune_n, prune_m)
+            elif "iter" in args.prune_method:
+                prune_mask = None 
+
+            gpts[name].fasterprune(args, args.sparsity_ratio, mask=prune_mask, prune_n=prune_n, prune_m=prune_m, percdamp=0.01, blocksize=128)
+            gpts[name].free()
+
+        for j in range(args.nsamples):
+            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+
+        layers[i] = layer 
+        torch.cuda.empty_cache()
+
+        inps, outs = outs, inps
+
+    model.config.use_cache = use_cache
     torch.cuda.empty_cache()
+
             return tmp
+
+        handles = []
+        for name in gpts:
+            handles.append(subset[name].register_forward_hook(add_batch(name)))
+
+        for j in range(args.nsamples):
+            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+        for h in handles:
+            h.remove()
+
+        for name in gpts:
+            print(i, name)
+            print('Pruning ...')
+
+            if args.prune_method == "ablate_wanda_seq":
+                prune_mask = gpts[name].get_wanda_mask(args.sparsity_ratio, prune_n, prune_m)
+            elif args.prune_method == "ablate_mag_seq":
+                prune_mask = gpts[name].get_mag_mask(args.sparsity_ratio, prune_n, prune_m)
+            elif "iter" in args.prune_method:
+                prune_mask = None 
+
+            gpts[name].fasterprune(args, args.sparsity_ratio, mask=prune_mask, prune_n=prune_n, prune_m=prune_m, percdamp=0.01, blocksize=128)
+            gpts[name].free()
+
+        for j in range(args.nsamples):
+            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+
+        layers[i] = layer 
+        torch.cuda.empty_cache()
+
+        inps, outs = outs, inps
+
+    model.config.use_cache = use_cache
+    torch.cuda.empty_cache()            return tmp
 
         handles = []
         for name in gpts:

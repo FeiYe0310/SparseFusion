@@ -1313,3 +1313,49 @@ def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):
 
     return make_array_from_callback(shape, sharding, _cb)
 
+
+                print(f"\n🏆 Saving the best model (by Total Score) from the last run to: {save_path}")
+                
+                # Log final statistics
+                best_sparsity = compute_sparsity(best_params, epsilon)
+                best_fitness = float(jnp.mean(scores[best_individual_idx]))
+                best_total_score = float(total_scores[best_individual_idx])
+                
+                print(f"   Final fitness: {best_fitness:.4f}")
+                print(f"   Final sparsity: {best_sparsity:.4f}")
+                print(f"   Final total score: {best_total_score:.4f}")
+                
+                # Record final best model info
+                results[run]["final_best_model"] = {
+                    "save_path": save_path,
+                    "fitness": best_fitness,
+                    "sparsity": float(best_sparsity),
+                    "total_score": best_total_score,
+                    "individual_idx": int(best_individual_idx)
+                }
+                
+                jnp.savez(save_path, params=best_params)
+                print("✅ Model saved successfully.")
+
+        return results
+
+
+def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):
+    """Helper function for sharded array initialization (IDENTICAL TO ORIGINAL)"""
+    if sharding is None or make_array_from_callback is None:
+        return jnp.zeros(shape, dtype=dtype)
+
+    def _cb(index):
+        slice_dims = []
+        for dim_idx, dim_size in zip(index, shape):
+            if isinstance(dim_idx, slice):
+                start = 0 if dim_idx.start is None else dim_idx.start
+                stop = dim_size if dim_idx.stop is None else dim_idx.stop
+                slice_dims.append(stop - start)
+            else:
+                slice_dims.append(1)
+        return jnp.zeros(tuple(slice_dims), dtype=dtype)
+
+    return make_array_from_callback(shape, sharding, _cb)
+
+
