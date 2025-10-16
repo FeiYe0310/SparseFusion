@@ -1066,7 +1066,7 @@ def run_natural_niches_sparsity_aware(
             # --- Archive Initialization (Main Process Only) ---
             print(f"--- Initializing Archive on Main Process (Rank {rank}) ---")
             archive_shape = (pop_size, num_params_llm)
-            scores_shape = (pop_size, len(tokenized_train_dataset))
+            scores_shape = (pop_size, num_tasks)  # 使用num_tasks，支持单任务和多任务
             if archive_sharding is not None:
                 archive = _sharded_zeros(archive_shape, jnp.bfloat16, archive_sharding)
                 scores = _sharded_zeros(scores_shape, jnp.float32, scores_sharding)
