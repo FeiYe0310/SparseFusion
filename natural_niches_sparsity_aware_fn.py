@@ -1571,6 +1571,7 @@ def create_multi_task_evaluation_fn(
         world_size=world_size,
         rank=rank,
         eval_subset_size=eval_subset_size,
+        return_subset_only=True,  # 多任务评估：不进行分布式聚合
     )
     
     def evaluation_fn(flat_params):
