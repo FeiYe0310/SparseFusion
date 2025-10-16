@@ -1602,22 +1602,14 @@ def create_bfcl_evaluation_fn(
             num_workers=0,
         )
         
-        # 重建模型参数
-        torch_params = {}
-        offset = 0
-        for name, shape in param_shapes.items():
-            numel = int(np.prod(shape))
-            param_flat = flat_params[offset:offset + numel]
-            torch_params[name] = torch.from_numpy(np.array(param_flat)).reshape(shape).to(device)
-            offset += numel
-        
-        # 加载参数
-        if distributed:
-            model_skeleton.module.load_state_dict(torch_params, strict=False)
-        else:
-            model_skeleton.load_state_dict(torch_params, strict=False)
-        
-        model_skeleton.eval()
+        # 重建模型参数（使用和GSM8K相同的方式）
+        base_model = (
+            model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+        )
+        restored_model = jax_flattened_to_pytorch_model(
+            flat_params, base_model, param_shapes
+        )
+        restored_model.eval()
         
         # 评估
         all_scores = []
@@ -1628,7 +1620,7 @@ def create_bfcl_evaluation_fn(
                 ground_truth_calls = batch['ground_truth']
                 
                 # Generate
-                generated_ids = model_skeleton.generate(
+                generated_ids = restored_model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=256,
