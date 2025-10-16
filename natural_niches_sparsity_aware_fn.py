@@ -1575,6 +1575,7 @@ def create_bfcl_evaluation_fn(
         evaluation_fn: 返回每个样本的得分 (1.0=正确, 0.0=错误)
     """
     from bfcl_eval_utils import extract_function_call, evaluate_function_call
+    from bfcl_data_utils import bfcl_collate_fn
     from torch.utils.data import DataLoader, Subset
     import random
     
@@ -1594,12 +1595,13 @@ def create_bfcl_evaluation_fn(
         else:
             eval_dataset = bfcl_dataset
         
-        # DataLoader
+        # DataLoader (使用BFCL专用的collate_fn)
         dataloader = DataLoader(
             eval_dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=0,
+            collate_fn=bfcl_collate_fn,
         )
         
         # 重建模型参数（使用和GSM8K相同的方式）
