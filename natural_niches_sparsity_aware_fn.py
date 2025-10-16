@@ -584,19 +584,19 @@ def create_evaluation_fn_for_llm(
         else:
             full_results_tensor = local_results_tensor[: len(eval_dataset)]
 
-        # 【加速】如果使用子集评估，需要扩展到完整数据集大小
+        # 【加速】如果使用子集评估，根据return_subset_only决定是否扩展
         if eval_subset_size is not None and eval_subset_size < len(tokenized_dataset):
-            # 策略：用当前子集的平均分数填充其他位置
-            # 这样可以保持Archive的fitness计算正确
             subset_scores = full_results_tensor.numpy()
-            avg_score = float(subset_scores.mean()) if len(subset_scores) > 0 else 0.0
             
-            # 创建完整大小的数组，用平均分数初始化
-            full_scores = np.full(len(tokenized_dataset), avg_score, dtype=np.float32)
-            # 将实际评估的位置填入真实分数
-            full_scores[indices] = subset_scores
-            
-            return jnp.array(full_scores)
+            if return_subset_only:
+                # 多任务评估：直接返回子集分数，不扩展
+                return jnp.array(subset_scores)
+            else:
+                # 单任务评估：扩展到完整数据集大小
+                avg_score = float(subset_scores.mean()) if len(subset_scores) > 0 else 0.0
+                full_scores = np.full(len(tokenized_dataset), avg_score, dtype=np.float32)
+                full_scores[indices] = subset_scores
+                return jnp.array(full_scores)
         else:
             return jnp.array(full_results_tensor.numpy())
 
@@ -898,7 +898,10 @@ def run_natural_niches_sparsity_aware(
             bfcl_dataset = None
             use_bfcl_eval = False
     
+    # 初始num_tasks设置（后续会根据是否使用BFCL和分布式调整）
     num_tasks = len(tokenized_train_dataset)
+    if dist_enabled and world_size > 1:
+        num_tasks = num_tasks * world_size  # 分布式聚合后的总任务数
 
     # --- Evaluation Setup (IDENTICAL TO ORIGINAL) ---
     if is_main_process:
@@ -1697,6 +1700,7 @@ def create_multi_task_evaluation_fn(
         world_size=world_size,
         rank=rank,
         eval_subset_size=eval_subset_size,
+        return_subset_only=True,  # 多任务：不扩展，直接返回子集分数
     )
     
     bfcl_eval_fn = create_bfcl_evaluation_fn(
