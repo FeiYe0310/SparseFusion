@@ -192,7 +192,8 @@ def load_bfcl_dataset(
     tokenized_dataset = dataset.map(
         preprocess_fn,
         remove_columns=dataset.column_names,
-        desc="Tokenizing BFCL dataset"
+        desc="Tokenizing BFCL dataset",
+        features=None,  # 禁用自动类型推断，保持原始类型
     )
     
     return tokenized_dataset
