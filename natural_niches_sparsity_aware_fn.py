@@ -439,6 +439,7 @@ def create_evaluation_fn_for_llm(
     world_size: int = 1,
     rank: int = 0,
     eval_subset_size: int = None,  # 每轮评估的样本数（None=使用全部数据）
+    return_subset_only: bool = False,  # 多任务评估时设为True，不扩展到完整数据集
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """
     Creates an evaluation function for GSM8K using **generation + exact match**.
@@ -1412,147 +1413,6 @@ def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):
 
 
 # ========== BFCL评估函数 ==========
-def create_bfcl_evaluation_fn(
-    model_skeleton,
-    param_shapes,
-    tokenized_dataset,
-    tokenizer,
-    batch_size=4,
-    distributed=False,
-    world_size=1,
-    rank=0,
-    eval_subset_size=None,
-):
-    """
-    创建BFCL (Berkeley Function Calling Leaderboard) 评估函数
-    
-    评估流程：
-    1. 模型生成function call (JSON格式)
-    2. 从生成文本提取function call
-    3. 与ground truth进行AST匹配
-    
-    Args:
-        eval_subset_size: 每轮评估的样本数（None=全部）
-        
-    Returns:
-        evaluation_fn: 评估函数，输入flat_params，输出scores数组
-    """
-    from bfcl_eval_utils import extract_function_call, evaluate_function_call
-    from bfcl_data_utils import bfcl_collate_fn
-    from torch.utils.data import DataLoader, Subset, DistributedSampler
-    
-    base_model = (
-        model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
-    )
-    device = next(base_model.parameters()).device
-    
-    # 迭代计数器（用于随机采样）
-    iteration_counter = {'count': 0}
-    
-    def evaluation_fn(flat_params):
-        """评估单个模型在BFCL上的表现"""
-        
-        # 恢复参数到模型
-        restored_model = jax_flattened_to_pytorch_model(
-            flat_params, base_model, param_shapes
-        )
-        restored_model.eval()
-        
-        # 【加速】随机采样子集
-        if eval_subset_size is not None and eval_subset_size < len(tokenized_dataset):
-            import random
-            random.seed(42 + iteration_counter['count'])
-            indices = random.sample(range(len(tokenized_dataset)), eval_subset_size)
-            indices.sort()
-            
-            eval_dataset = Subset(tokenized_dataset, indices)
-            iteration_counter['count'] += 1
-            
-            if rank == 0:
-                print(f"  [BFCL Eval] 使用 {eval_subset_size}/{len(tokenized_dataset)} 样本")
-        else:
-            eval_dataset = tokenized_dataset
-        
-        # 创建DataLoader
-        if distributed:
-            sampler = DistributedSampler(
-                eval_dataset,
-                num_replicas=world_size,
-                rank=rank,
-                shuffle=False,
-            )
-            data_loader = DataLoader(
-                eval_dataset,
-                batch_size=batch_size,
-                sampler=sampler,
-                collate_fn=bfcl_collate_fn
-            )
-        else:
-            data_loader = DataLoader(
-                eval_dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                collate_fn=bfcl_collate_fn
-            )
-        
-        # 批量评估
-        local_scores = []
-        
-        with torch.no_grad():
-            for batch in data_loader:
-                input_ids = batch["input_ids"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-                ground_truths = batch["ground_truth"]  # List[Dict]
-                
-                # 生成function call (较短的输出)
-                generated_ids = restored_model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=256,  # function call通常较短
-                    do_sample=False,
-                    pad_token_id=tokenizer.pad_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                )
-                
-                # 解码生成的文本
-                generated_texts = tokenizer.batch_decode(
-                    generated_ids[:, input_ids.shape[1]:],
-                    skip_special_tokens=True
-                )
-                
-                # 评估每个样本
-                for gen_text, gt_call in zip(generated_texts, ground_truths):
-                    # 提取生成的function call
-                    pred_call = extract_function_call(gen_text)
-                    
-                    # 评估准确性
-                    score = evaluate_function_call(pred_call, gt_call, strict=False)
-                    local_scores.append(score)
-        
-        if not local_scores:
-            return jnp.zeros(len(eval_dataset))
-        
-        # 转为tensor
-        local_results_tensor = torch.tensor(local_scores, dtype=torch.float32)
-        
-        # 分布式gather
-        if distributed:
-            local_results_tensor = local_results_tensor.to(device)
-            gathered_tensors = [
-                torch.empty_like(local_results_tensor) for _ in range(world_size)
-            ]
-            torch.distributed.all_gather(gathered_tensors, local_results_tensor)
-            full_results_tensor = torch.cat(gathered_tensors)[:len(eval_dataset)]
-        else:
-            full_results_tensor = local_results_tensor
-        
-        # 转为JAX array
-        scores_array = jnp.array(full_results_tensor.cpu().numpy())
-        
-        return scores_array
-    
-    return evaluation_fn
-
 
 # ========== BFCL评估函数 ==========
 def create_bfcl_evaluation_fn(
@@ -1565,6 +1425,7 @@ def create_bfcl_evaluation_fn(
     world_size: int = 1,
     rank: int = 0,
     eval_subset_size: int = None,
+    return_subset_only: bool = False,  # 多任务评估时设为True，不进行分布式聚合
 ):
     """
     创建BFCL (Berkeley Function Calling Leaderboard) 评估函数
@@ -1651,13 +1512,13 @@ def create_bfcl_evaluation_fn(
                     except Exception:
                         all_scores.append(0.0)  # Parse error = incorrect
         
-        # 分布式聚合
+        # 分布式聚合（与GSM8K评估函数保持一致）
         if distributed and world_size > 1:
             scores_tensor = torch.tensor(all_scores, dtype=torch.float32, device=device)
             gathered = [torch.zeros_like(scores_tensor) for _ in range(world_size)]
             torch.distributed.all_gather(gathered, scores_tensor)
-            if rank == 0:
-                all_scores = torch.cat(gathered).cpu().numpy().tolist()
+            # 截断到eval_dataset的长度（与GSM8K评估函数保持一致）
+            all_scores = torch.cat(gathered)[:len(eval_dataset)].cpu().numpy().tolist()
         
         return jnp.array(all_scores, dtype=jnp.float32)
     
