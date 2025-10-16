@@ -182,19 +182,15 @@ def load_bfcl_dataset(
     if subset_size is not None and subset_size < len(raw_data):
         raw_data = raw_data[:subset_size]
     
-    # 转换为Dataset
-    dataset = Dataset.from_list(raw_data)
+    # 直接预处理，不使用Dataset.from_list以避免类型推断问题
+    print(f"Preprocessing {len(raw_data)} BFCL samples...")
+    tokenized_samples = []
+    for example in raw_data:
+        tokenized_sample = preprocess_bfcl_example(example, tokenizer, max_length)
+        tokenized_samples.append(tokenized_sample)
     
-    # 预处理
-    def preprocess_fn(example):
-        return preprocess_bfcl_example(example, tokenizer, max_length)
-    
-    tokenized_dataset = dataset.map(
-        preprocess_fn,
-        remove_columns=dataset.column_names,
-        desc="Tokenizing BFCL dataset",
-        features=None,  # 禁用自动类型推断，保持原始类型
-    )
+    # 从预处理后的数据创建Dataset（此时都是简单类型）
+    tokenized_dataset = Dataset.from_list(tokenized_samples)
     
     return tokenized_dataset
 
