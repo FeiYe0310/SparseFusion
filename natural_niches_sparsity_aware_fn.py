@@ -27,6 +27,8 @@ import math
 import sys
 import pickle
 from contextlib import nullcontext
+import json
+import random
 
 # Add current directory to path for importing lib/ module
 # This ensures the code is portable across different environments
@@ -753,6 +755,10 @@ def run_natural_niches_sparsity_aware(
     archive_backend: str = "gpu",
     log_sparsity_stats: bool = False,
     eval_subset_size: int = None,  # 🚀 NEW: 每轮评估的样本数（加速）
+    use_bfcl_eval: bool = False,  # 🎯 BFCL: 是否启用BFCL多任务评估
+    bfcl_data_path: str = "bfcl/data/bfcl_test_200.json",  # BFCL数据路径
+    gsm8k_weight: float = 0.5,  # GSM8K任务权重
+    bfcl_weight: float = 0.5,  # BFCL任务权重
 ) -> list:
     """
     Run Natural Niches with Sparsity-Aware Selection and Wanda Pruning
@@ -873,6 +879,25 @@ def run_natural_niches_sparsity_aware(
     # 不使用set_format，保持原始格式
     # DataLoader会自动将input_ids等转为tensor，answer_text保持为字符串列表
     
+    # ============================================================================
+    # 🎯 BFCL Data Loading (if enabled)
+    # ============================================================================
+    bfcl_dataset = None
+    if use_bfcl_eval:
+        if is_main_process:
+            print(f"\n🎯 Loading BFCL dataset: {bfcl_data_path}")
+        try:
+            from bfcl_data_utils import load_bfcl_dataset
+            bfcl_dataset = load_bfcl_dataset(bfcl_data_path, tokenizer)
+            if is_main_process:
+                print(f"✅ BFCL dataset loaded: {len(bfcl_dataset)} samples")
+        except Exception as e:
+            if is_main_process:
+                print(f"❌ Failed to load BFCL dataset: {e}")
+                print("Continuing with GSM8K only...")
+            bfcl_dataset = None
+            use_bfcl_eval = False
+    
     num_tasks = len(tokenized_train_dataset)
 
     # --- Evaluation Setup (IDENTICAL TO ORIGINAL) ---
@@ -892,26 +917,75 @@ def run_natural_niches_sparsity_aware(
 
     model_skeleton.eval()
 
-    train_eval_fn = create_evaluation_fn_for_llm(
-        model_skeleton,
-        param_shapes,
-        tokenized_train_dataset,
-        tokenizer,
-        distributed=dist_enabled,
-        world_size=world_size,
-        rank=rank,
-        eval_subset_size=eval_subset_size,  # 🚀 加速：随机采样子集
-    )
-    test_eval_fn = create_evaluation_fn_for_llm(
-        model_skeleton,
-        param_shapes,
-        tokenized_test_dataset,
-        tokenizer,
-        distributed=dist_enabled,
-        world_size=world_size,
-        rank=rank,
-        eval_subset_size=None,  # 测试集始终使用全部数据
-    )
+    # ============================================================================
+    # 🎯 Create Evaluation Functions (GSM8K or Multi-Task)
+    # ============================================================================
+    if use_bfcl_eval and bfcl_dataset is not None:
+        # Multi-task evaluation: GSM8K + BFCL
+        if is_main_process:
+            print("\n🎯 Creating Multi-Task Evaluation (GSM8K + BFCL)")
+            print(f"  GSM8K weight: {gsm8k_weight}")
+            print(f"  BFCL weight: {bfcl_weight}")
+        
+        train_eval_fn = create_multi_task_evaluation_fn(
+            model_skeleton,
+            param_shapes,
+            tokenized_train_dataset,
+            bfcl_dataset,
+            tokenizer,
+            task_weights={"gsm8k": gsm8k_weight, "bfcl": bfcl_weight},
+            distributed=dist_enabled,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=eval_subset_size,
+        )
+        
+        # Test evaluation: GSM8K only (for compatibility)
+        test_eval_fn = create_evaluation_fn_for_llm(
+            model_skeleton,
+            param_shapes,
+            tokenized_test_dataset,
+            tokenizer,
+            distributed=dist_enabled,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=None,
+        )
+        
+        # Update num_tasks for competitive normalization
+        # Multi-task: eval_subset_size * 2 (GSM8K + BFCL)
+        if eval_subset_size is not None:
+            num_tasks = eval_subset_size * 2
+        else:
+            num_tasks = len(tokenized_train_dataset) + len(bfcl_dataset)
+        
+    else:
+        # Single-task evaluation: GSM8K only
+        if is_main_process:
+            print("\n📊 Creating GSM8K-only Evaluation")
+        
+        train_eval_fn = create_evaluation_fn_for_llm(
+            model_skeleton,
+            param_shapes,
+            tokenized_train_dataset,
+            tokenizer,
+            distributed=dist_enabled,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=eval_subset_size,
+        )
+        test_eval_fn = create_evaluation_fn_for_llm(
+            model_skeleton,
+            param_shapes,
+            tokenized_test_dataset,
+            tokenizer,
+            distributed=dist_enabled,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=None,
+        )
+        
+        # num_tasks已经在前面设置为len(tokenized_train_dataset)
 
     # --- Archive Sharding Setup (IDENTICAL TO ORIGINAL) ---
     archive_sharding = None
@@ -1473,6 +1547,122 @@ def create_bfcl_evaluation_fn(
         scores_array = jnp.array(full_results_tensor.cpu().numpy())
         
         return scores_array
+    
+    return evaluation_fn
+
+
+# ========== BFCL评估函数 ==========
+def create_bfcl_evaluation_fn(
+    model_skeleton,
+    param_shapes,
+    bfcl_dataset,
+    tokenizer: AutoTokenizer,
+    batch_size: int = 4,
+    distributed: bool = False,
+    world_size: int = 1,
+    rank: int = 0,
+    eval_subset_size: int = None,
+):
+    """
+    创建BFCL (Berkeley Function Calling Leaderboard) 评估函数
+    
+    评估函数调用能力：
+    1. 给定user query和可用functions
+    2. 模型生成function call（JSON格式）
+    3. 使用AST matching评估正确性
+    
+    Returns:
+        evaluation_fn: 返回每个样本的得分 (1.0=正确, 0.0=错误)
+    """
+    from bfcl_eval_utils import extract_function_call, evaluate_function_call
+    from torch.utils.data import DataLoader, Subset
+    import random
+    
+    device = next(model_skeleton.parameters()).device
+    iteration_counter = {'count': 0}
+    
+    def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
+        """评估BFCL任务"""
+        iteration_counter['count'] += 1
+        
+        # 采样子集
+        if eval_subset_size is not None and eval_subset_size < len(bfcl_dataset):
+            indices = random.sample(range(len(bfcl_dataset)), eval_subset_size)
+            eval_dataset = Subset(bfcl_dataset, indices)
+            if rank == 0:
+                print(f"  [BFCL] 采样 {eval_subset_size}/{len(bfcl_dataset)} 样本")
+        else:
+            eval_dataset = bfcl_dataset
+        
+        # DataLoader
+        dataloader = DataLoader(
+            eval_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+        
+        # 重建模型参数
+        torch_params = {}
+        offset = 0
+        for name, shape in param_shapes.items():
+            numel = int(np.prod(shape))
+            param_flat = flat_params[offset:offset + numel]
+            torch_params[name] = torch.from_numpy(np.array(param_flat)).reshape(shape).to(device)
+            offset += numel
+        
+        # 加载参数
+        if distributed:
+            model_skeleton.module.load_state_dict(torch_params, strict=False)
+        else:
+            model_skeleton.load_state_dict(torch_params, strict=False)
+        
+        model_skeleton.eval()
+        
+        # 评估
+        all_scores = []
+        with torch.no_grad():
+            for batch in dataloader:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                ground_truth_calls = batch['ground_truth']
+                
+                # Generate
+                generated_ids = model_skeleton.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=256,
+                    do_sample=False,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                )
+                
+                # Decode
+                generated_texts = tokenizer.batch_decode(
+                    generated_ids[:, input_ids.shape[1]:],
+                    skip_special_tokens=True
+                )
+                
+                # Evaluate each sample
+                for gen_text, gt_call in zip(generated_texts, ground_truth_calls):
+                    try:
+                        # Extract function call from generated text
+                        pred_call = extract_function_call(gen_text)
+                        # Evaluate using AST matching
+                        is_correct = evaluate_function_call(pred_call, gt_call)
+                        all_scores.append(1.0 if is_correct else 0.0)
+                    except Exception:
+                        all_scores.append(0.0)  # Parse error = incorrect
+        
+        # 分布式聚合
+        if distributed and world_size > 1:
+            scores_tensor = torch.tensor(all_scores, dtype=torch.float32, device=device)
+            gathered = [torch.zeros_like(scores_tensor) for _ in range(world_size)]
+            torch.distributed.all_gather(gathered, scores_tensor)
+            if rank == 0:
+                all_scores = torch.cat(gathered).cpu().numpy().tolist()
+        
+        return jnp.array(all_scores, dtype=jnp.float32)
     
     return evaluation_fn
 
