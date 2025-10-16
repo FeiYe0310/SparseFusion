@@ -1,18 +1,29 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+
 # 🚀 服务器端设置脚本 - 在服务器上运行这个
+# 检查BFCL环境是否就绪
+
+# ============================================================================
+# Workspace setup (match run_sparsity_single_node.sh)
+# ============================================================================
+ROOTPATH=${ROOTPATH:-/mnt/shared-storage-user/yefei}
 
 echo "========================================"
 echo "🚀 服务器端BFCL设置"
 echo "========================================"
-
-# 0. 设置代理（根据你的服务器配置）
 echo ""
-echo "步骤0: 设置代理"
-echo "----------------------------------------"
-export https_proxy=YOUR_PROXY_HERE  # ← 修改为你服务器的代理
-export http_proxy=YOUR_PROXY_HERE
+echo "工作目录: $ROOTPATH/SparseFusion"
+echo ""
 
-# 或者如果服务器没有代理，注释掉上面两行
+# Change to workspace
+if [[ -d "$ROOTPATH/SparseFusion" ]]; then
+  cd "$ROOTPATH/SparseFusion"
+else
+  echo "❌ 目录不存在: $ROOTPATH/SparseFusion" >&2
+  echo "请先克隆仓库或设置正确的ROOTPATH" >&2
+  exit 1
+fi
 
 # 1. 检查git同步
 echo ""
