@@ -65,6 +65,17 @@ def parse_arguments():
     # 🚀 加速参数
     parser.add_argument("--eval_subset_size", type=int, default=None,
                         help="Number of samples to evaluate per iteration (None=all data, 30=sample 30 points per iter for speedup)")
+    
+    # 🎯 BFCL多任务评估参数
+    parser.add_argument("--use_bfcl_eval", action="store_true",
+                        help="Enable BFCL function calling evaluation")
+    parser.add_argument("--bfcl_data_path", type=str, 
+                        default="bfcl/data/bfcl_test_200.json",
+                        help="Path to BFCL test dataset")
+    parser.add_argument("--gsm8k_weight", type=float, default=0.5,
+                        help="Weight for GSM8K task in multi-task learning")
+    parser.add_argument("--bfcl_weight", type=float, default=0.5,
+                        help="Weight for BFCL task in multi-task learning")
 
     return parser.parse_args()
 
@@ -81,6 +92,11 @@ def main():
     print(f"Runs: {args.runs}")
     if args.eval_subset_size:
         print(f"🚀 Eval subset size: {args.eval_subset_size} (加速模式)")
+    if args.use_bfcl_eval:
+        print(f"🎯 BFCL Evaluation ENABLED")
+        print(f"  GSM8K weight: {args.gsm8k_weight}")
+        print(f"  BFCL weight: {args.bfcl_weight}")
+        print(f"  BFCL data: {args.bfcl_data_path}")
     print(f"\nSparsity-Aware Parameters:")
     print(f"  ω (omega): {args.omega} - Fitness weight")
     print(f"  β (beta): {args.beta} - Sparsity weight")
@@ -131,6 +147,10 @@ def main():
         archive_backend=args.archive_backend,
         log_sparsity_stats=args.log_sparsity_stats,
         eval_subset_size=args.eval_subset_size,  # 🚀 加速参数
+        use_bfcl_eval=args.use_bfcl_eval,  # 🎯 BFCL评估
+        bfcl_data_path=args.bfcl_data_path,
+        gsm8k_weight=args.gsm8k_weight,
+        bfcl_weight=args.bfcl_weight,
     )
 
     # Save results

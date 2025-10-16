@@ -1,0 +1,280 @@
+[
+    {
+        "id": "simple_1",
+        "functions": [
+            {
+                "name": "get_weather",
+                "description": "Get current weather for a location",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city name"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "Temperature unit"
+                        }
+                    },
+                    "required": ["location"]
+                }
+            }
+        ],
+        "user_query": "What's the weather like in Beijing?",
+        "ground_truth": {
+            "name": "get_weather",
+            "arguments": {
+                "location": "Beijing"
+            }
+        }
+    },
+    {
+        "id": "simple_2",
+        "functions": [
+            {
+                "name": "calculate_area",
+                "description": "Calculate the area of a rectangle",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "length": {
+                            "type": "number",
+                            "description": "Length of the rectangle"
+                        },
+                        "width": {
+                            "type": "number",
+                            "description": "Width of the rectangle"
+                        }
+                    },
+                    "required": ["length", "width"]
+                }
+            }
+        ],
+        "user_query": "Calculate the area of a rectangle with length 5 and width 3",
+        "ground_truth": {
+            "name": "calculate_area",
+            "arguments": {
+                "length": 5,
+                "width": 3
+            }
+        }
+    },
+    {
+        "id": "simple_3",
+        "functions": [
+            {
+                "name": "send_email",
+                "description": "Send an email to a recipient",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": {
+                            "type": "string",
+                            "description": "Recipient email address"
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Email subject"
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "Email body content"
+                        }
+                    },
+                    "required": ["to", "subject", "body"]
+                }
+            }
+        ],
+        "user_query": "Send an email to john@example.com with subject 'Meeting' and body 'Let us meet tomorrow'",
+        "ground_truth": {
+            "name": "send_email",
+            "arguments": {
+                "to": "john@example.com",
+                "subject": "Meeting",
+                "body": "Let us meet tomorrow"
+            }
+        }
+    },
+    {
+        "id": "simple_4",
+        "functions": [
+            {
+                "name": "set_alarm",
+                "description": "Set an alarm for a specific time",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "time": {
+                            "type": "string",
+                            "description": "Time in HH:MM format"
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "Alarm message"
+                        }
+                    },
+                    "required": ["time"]
+                }
+            }
+        ],
+        "user_query": "Set an alarm for 7:30 AM with message 'Wake up'",
+        "ground_truth": {
+            "name": "set_alarm",
+            "arguments": {
+                "time": "07:30",
+                "message": "Wake up"
+            }
+        }
+    },
+    {
+        "id": "simple_5",
+        "functions": [
+            {
+                "name": "book_flight",
+                "description": "Book a flight ticket",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "origin": {
+                            "type": "string",
+                            "description": "Departure city"
+                        },
+                        "destination": {
+                            "type": "string",
+                            "description": "Arrival city"
+                        },
+                        "date": {
+                            "type": "string",
+                            "description": "Flight date in YYYY-MM-DD format"
+                        },
+                        "passengers": {
+                            "type": "integer",
+                            "description": "Number of passengers"
+                        }
+                    },
+                    "required": ["origin", "destination", "date"]
+                }
+            }
+        ],
+        "user_query": "Book a flight from Shanghai to Tokyo on 2024-12-25 for 2 passengers",
+        "ground_truth": {
+            "name": "book_flight",
+            "arguments": {
+                "origin": "Shanghai",
+                "destination": "Tokyo",
+                "date": "2024-12-25",
+                "passengers": 2
+            }
+        }
+    },
+    {
+        "id": "multi_func_1",
+        "functions": [
+            {
+                "name": "get_stock_price",
+                "description": "Get current stock price",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "Stock symbol (e.g., AAPL)"
+                        }
+                    },
+                    "required": ["symbol"]
+                }
+            },
+            {
+                "name": "get_company_info",
+                "description": "Get company information",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "company_name": {
+                            "type": "string",
+                            "description": "Company name"
+                        }
+                    },
+                    "required": ["company_name"]
+                }
+            }
+        ],
+        "user_query": "What is the current stock price of Apple?",
+        "ground_truth": {
+            "name": "get_stock_price",
+            "arguments": {
+                "symbol": "AAPL"
+            }
+        }
+    },
+    {
+        "id": "math_1",
+        "functions": [
+            {
+                "name": "add",
+                "description": "Add two numbers",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "number"},
+                        "b": {"type": "number"}
+                    },
+                    "required": ["a", "b"]
+                }
+            },
+            {
+                "name": "multiply",
+                "description": "Multiply two numbers",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "number"},
+                        "b": {"type": "number"}
+                    },
+                    "required": ["a", "b"]
+                }
+            }
+        ],
+        "user_query": "Calculate 15 multiplied by 4",
+        "ground_truth": {
+            "name": "multiply",
+            "arguments": {
+                "a": 15,
+                "b": 4
+            }
+        }
+    },
+    {
+        "id": "search_1",
+        "functions": [
+            {
+                "name": "search_web",
+                "description": "Search the web for information",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query"
+                        },
+                        "num_results": {
+                            "type": "integer",
+                            "description": "Number of results to return"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        ],
+        "user_query": "Search for information about artificial intelligence",
+        "ground_truth": {
+            "name": "search_web",
+            "arguments": {
+                "query": "artificial intelligence"
+            }
+        }
+    }
+]
+

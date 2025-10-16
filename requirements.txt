@@ -24,3 +24,13 @@ datasets
 # 其他辅助库
 numpy
 tqdm
+
+# ==============================================================================
+# BFCL (Berkeley Function Call Leaderboard) 评估依赖
+# ==============================================================================
+# 用于函数调用能力评估
+requests  # API调用
+openai    # OpenAI模型支持 (可选)
+anthropic # Anthropic模型支持 (可选)
+tiktoken  # Token计数
+jsonschema # JSON模式验证
