@@ -46,13 +46,20 @@ def extract_history_from_results(data):
     data可能是：
     1. dict with 'results' key containing list of records
     2. list of records directly
+    3. dict with 'results' as a tuple: (key, {'evaluation_history': [...]})
     """
     records = []
     
     if isinstance(data, dict):
         if 'results' in data:
             results_data = data['results']
-            if isinstance(results_data, dict) and 'evaluation_history' in results_data:
+            
+            # 处理tuple格式: (key, {'evaluation_history': [...]})
+            if isinstance(results_data, tuple) and len(results_data) == 2:
+                # 第二个元素应该是包含evaluation_history的dict
+                if isinstance(results_data[1], dict) and 'evaluation_history' in results_data[1]:
+                    records = results_data[1]['evaluation_history']
+            elif isinstance(results_data, dict) and 'evaluation_history' in results_data:
                 records = results_data['evaluation_history']
             elif isinstance(results_data, list):
                 records = results_data
@@ -118,14 +125,28 @@ def extract_final_population(data):
     if isinstance(data, dict):
         if 'results' in data:
             results_data = data['results']
-            if isinstance(results_data, dict) and 'evaluation_history' in results_data:
+            
+            # 处理tuple格式: (key, {'evaluation_history': [...]})
+            if isinstance(results_data, tuple) and len(results_data) == 2:
+                if isinstance(results_data[1], dict) and 'evaluation_history' in results_data[1]:
+                    records = results_data[1]['evaluation_history']
+            elif isinstance(results_data, dict) and 'evaluation_history' in results_data:
                 records = results_data['evaluation_history']
             elif isinstance(results_data, list):
                 records = results_data
         elif 'evaluation_history' in data:
             records = data['evaluation_history']
     elif isinstance(data, list):
-        records = data
+        # 如果是list，可能整个list就是records，或者list包含一个dict
+        if len(data) > 0:
+            if isinstance(data[0], dict) and 'iteration' in data[0]:
+                # list中直接是记录
+                records = data
+            elif isinstance(data[0], dict) and 'evaluation_history' in data[0]:
+                # list中第一个元素是包含evaluation_history的dict
+                records = data[0]['evaluation_history']
+        else:
+            records = data
     
     if not records:
         return {'fitness': np.array([]), 'sparsity': np.array([])}
