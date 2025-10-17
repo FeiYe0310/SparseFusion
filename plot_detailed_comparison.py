@@ -26,10 +26,17 @@ def load_and_extract_data(checkpoint_path):
     
     # 提取records
     if isinstance(data, dict) and 'results' in data:
-        if isinstance(data['results'], list):
-            records = data['results']
+        results = data['results']
+        if isinstance(results, list) and len(results) > 0:
+            # Baseline格式: results[0]可能是dict with test_evaluations
+            if isinstance(results[0], dict) and 'test_evaluations' in results[0]:
+                records = results[0]['test_evaluations']
+            else:
+                # 直接是records list
+                records = results
     elif isinstance(data, list) and len(data) > 0:
         first_elem = data[0]
+        # Sparsity-aware格式: list[0]是defaultdict with test_evaluations
         if hasattr(first_elem, 'keys') and 'test_evaluations' in first_elem:
             records = first_elem['test_evaluations']
     
