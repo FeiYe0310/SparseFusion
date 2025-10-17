@@ -66,7 +66,21 @@ def extract_history_from_results(data):
         elif 'evaluation_history' in data:
             records = data['evaluation_history']
     elif isinstance(data, list):
-        records = data
+        # 如果是list，可能的格式：
+        # 1. list of records直接
+        # 2. list包含tuple: (key, {'evaluation_history': [...]})
+        if len(data) > 0:
+            first_elem = data[0]
+            
+            # 检查是否是tuple格式
+            if isinstance(first_elem, tuple) and len(first_elem) == 2:
+                if isinstance(first_elem[1], dict) and 'evaluation_history' in first_elem[1]:
+                    records = first_elem[1]['evaluation_history']
+            elif isinstance(first_elem, dict) and 'iteration' in first_elem:
+                # list中直接是记录
+                records = data
+        else:
+            records = data
     
     # 按iteration分组统计
     iteration_data = defaultdict(lambda: {'fitness': [], 'sparsity': []})
@@ -137,14 +151,23 @@ def extract_final_population(data):
         elif 'evaluation_history' in data:
             records = data['evaluation_history']
     elif isinstance(data, list):
-        # 如果是list，可能整个list就是records，或者list包含一个dict
+        # 如果是list，可能的格式：
+        # 1. list of records直接
+        # 2. list包含dict with evaluation_history
+        # 3. list包含tuple: (key, {'evaluation_history': [...]})
         if len(data) > 0:
-            if isinstance(data[0], dict) and 'iteration' in data[0]:
+            first_elem = data[0]
+            
+            # 检查是否是tuple格式
+            if isinstance(first_elem, tuple) and len(first_elem) == 2:
+                if isinstance(first_elem[1], dict) and 'evaluation_history' in first_elem[1]:
+                    records = first_elem[1]['evaluation_history']
+            elif isinstance(first_elem, dict) and 'iteration' in first_elem:
                 # list中直接是记录
                 records = data
-            elif isinstance(data[0], dict) and 'evaluation_history' in data[0]:
+            elif isinstance(first_elem, dict) and 'evaluation_history' in first_elem:
                 # list中第一个元素是包含evaluation_history的dict
-                records = data[0]['evaluation_history']
+                records = first_elem['evaluation_history']
         else:
             records = data
     
