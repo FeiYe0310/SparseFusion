@@ -11,7 +11,21 @@ print(f"Type: {type(data1)}")
 print(f"Keys: {list(data1.keys())}")
 print(f"\nresults type: {type(data1['results'])}")
 
-if isinstance(data1['results'], tuple):
+if isinstance(data1['results'], list):
+    print(f"results is list, length: {len(data1['results'])}")
+    if len(data1['results']) > 0:
+        print(f"results[0] type: {type(data1['results'][0])}")
+        
+        # 检查是否是record
+        if isinstance(data1['results'][0], dict):
+            print(f"results[0] keys: {list(data1['results'][0].keys())}")
+            print(f"\nFirst 3 records:")
+            for i in range(min(3, len(data1['results']))):
+                print(f"  {data1['results'][i]}")
+            print(f"\nLast 3 records:")
+            for i in range(max(0, len(data1['results'])-3), len(data1['results'])):
+                print(f"  {data1['results'][i]}")
+elif isinstance(data1['results'], tuple):
     print(f"results is tuple, length: {len(data1['results'])}")
     print(f"results[0] type: {type(data1['results'][0])}")
     print(f"results[1] type: {type(data1['results'][1])}")
@@ -35,7 +49,27 @@ print(f"Type: {type(data2)}")
 print(f"Length: {len(data2)}")
 print(f"\nFirst element type: {type(data2[0])}")
 
-if isinstance(data2[0], tuple):
+if isinstance(data2[0], dict) or hasattr(data2[0], 'keys'):
+    print(f"First element is dict-like")
+    print(f"data2[0] keys: {list(data2[0].keys())}")
+    
+    if 'evaluation_history' in data2[0]:
+        history = data2[0]['evaluation_history']
+        print(f"evaluation_history length: {len(history)}")
+        if len(history) > 0:
+            print(f"First 3 records:")
+            for i in range(min(3, len(history))):
+                print(f"  {history[i]}")
+            print(f"\nLast 3 records:")
+            for i in range(max(0, len(history)-3), len(history)):
+                print(f"  {history[i]}")
+    else:
+        # 可能是直接的records
+        print(f"\nTrying to iterate first element as records...")
+        items = list(data2[0].items())[:3]
+        for k, v in items:
+            print(f"  Key: {k}, Value type: {type(v)}")
+elif isinstance(data2[0], tuple):
     print(f"First element is tuple, length: {len(data2[0])}")
     print(f"data2[0][0] type: {type(data2[0][0])}")
     print(f"data2[0][1] type: {type(data2[0][1])}")
