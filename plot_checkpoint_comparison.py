@@ -46,7 +46,7 @@ def extract_history_from_results(data):
     data可能是：
     1. dict with 'results' key containing list of records
     2. list of records directly
-    3. dict with 'results' as a tuple: (key, {'evaluation_history': [...]})
+    3. list containing defaultdict with 'test_evaluations' key
     """
     records = []
     
@@ -54,28 +54,30 @@ def extract_history_from_results(data):
         if 'results' in data:
             results_data = data['results']
             
-            # 处理tuple格式: (key, {'evaluation_history': [...]})
-            if isinstance(results_data, tuple) and len(results_data) == 2:
-                # 第二个元素应该是包含evaluation_history的dict
-                if isinstance(results_data[1], dict) and 'evaluation_history' in results_data[1]:
-                    records = results_data[1]['evaluation_history']
+            # results是list of records
+            if isinstance(results_data, list):
+                records = results_data
             elif isinstance(results_data, dict) and 'evaluation_history' in results_data:
                 records = results_data['evaluation_history']
-            elif isinstance(results_data, list):
-                records = results_data
         elif 'evaluation_history' in data:
             records = data['evaluation_history']
     elif isinstance(data, list):
         # 如果是list，可能的格式：
         # 1. list of records直接
-        # 2. list包含tuple: (key, {'evaluation_history': [...]})
+        # 2. list包含defaultdict with test_evaluations
         if len(data) > 0:
             first_elem = data[0]
             
-            # 检查是否是tuple格式
-            if isinstance(first_elem, tuple) and len(first_elem) == 2:
-                if isinstance(first_elem[1], dict) and 'evaluation_history' in first_elem[1]:
-                    records = first_elem[1]['evaluation_history']
+            # 检查是否是dict-like (包括defaultdict)
+            if hasattr(first_elem, 'keys'):
+                # 检查是否有test_evaluations key
+                if 'test_evaluations' in first_elem:
+                    records = first_elem['test_evaluations']
+                elif 'evaluation_history' in first_elem:
+                    records = first_elem['evaluation_history']
+                elif 'iteration' in first_elem:
+                    # list中直接是记录
+                    records = data
             elif isinstance(first_elem, dict) and 'iteration' in first_elem:
                 # list中直接是记录
                 records = data
@@ -140,34 +142,33 @@ def extract_final_population(data):
         if 'results' in data:
             results_data = data['results']
             
-            # 处理tuple格式: (key, {'evaluation_history': [...]})
-            if isinstance(results_data, tuple) and len(results_data) == 2:
-                if isinstance(results_data[1], dict) and 'evaluation_history' in results_data[1]:
-                    records = results_data[1]['evaluation_history']
+            # results是list of records
+            if isinstance(results_data, list):
+                records = results_data
             elif isinstance(results_data, dict) and 'evaluation_history' in results_data:
                 records = results_data['evaluation_history']
-            elif isinstance(results_data, list):
-                records = results_data
         elif 'evaluation_history' in data:
             records = data['evaluation_history']
     elif isinstance(data, list):
         # 如果是list，可能的格式：
         # 1. list of records直接
-        # 2. list包含dict with evaluation_history
-        # 3. list包含tuple: (key, {'evaluation_history': [...]})
+        # 2. list包含defaultdict with test_evaluations
         if len(data) > 0:
             first_elem = data[0]
             
-            # 检查是否是tuple格式
-            if isinstance(first_elem, tuple) and len(first_elem) == 2:
-                if isinstance(first_elem[1], dict) and 'evaluation_history' in first_elem[1]:
-                    records = first_elem[1]['evaluation_history']
+            # 检查是否是dict-like (包括defaultdict)
+            if hasattr(first_elem, 'keys'):
+                # 检查是否有test_evaluations key
+                if 'test_evaluations' in first_elem:
+                    records = first_elem['test_evaluations']
+                elif 'evaluation_history' in first_elem:
+                    records = first_elem['evaluation_history']
+                elif 'iteration' in first_elem:
+                    # list中直接是记录
+                    records = data
             elif isinstance(first_elem, dict) and 'iteration' in first_elem:
                 # list中直接是记录
                 records = data
-            elif isinstance(first_elem, dict) and 'evaluation_history' in first_elem:
-                # list中第一个元素是包含evaluation_history的dict
-                records = first_elem['evaluation_history']
         else:
             records = data
     
