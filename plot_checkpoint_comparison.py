@@ -27,18 +27,35 @@ def load_checkpoint(checkpoint_path):
         data = pickle.load(f)
     
     # 打印checkpoint信息
-    print(f"  Keys: {list(data.keys())}")
-    if 'history' in data:
-        print(f"  History steps: {len(data['history'])}")
-    if 'archive' in data:
-        print(f"  Archive size: {len(data['archive'])}")
+    if isinstance(data, dict):
+        print(f"  Type: dict")
+        print(f"  Keys: {list(data.keys())}")
+        if 'history' in data:
+            print(f"  History steps: {len(data['history'])}")
+        if 'archive' in data:
+            print(f"  Archive size: {len(data['archive'])}")
+    elif isinstance(data, list):
+        print(f"  Type: list")
+        print(f"  Length: {len(data)}")
+        if len(data) > 0 and isinstance(data[0], dict):
+            print(f"  First entry keys: {list(data[0].keys())}")
+    else:
+        print(f"  Type: {type(data)}")
     
     return data
 
 
 def extract_history(checkpoint_data):
     """从checkpoint提取历史数据"""
-    history = checkpoint_data.get('history', [])
+    # 支持两种格式：
+    # 1. dict with 'history' key
+    # 2. list of history entries
+    if isinstance(checkpoint_data, list):
+        history = checkpoint_data
+    elif isinstance(checkpoint_data, dict):
+        history = checkpoint_data.get('history', [])
+    else:
+        history = []
     
     forward_passes = []
     max_fitness = []
@@ -49,6 +66,9 @@ def extract_history(checkpoint_data):
     mean_total_score = []
     
     for entry in history:
+        if not isinstance(entry, dict):
+            continue
+            
         forward_passes.append(entry.get('forward_passes', 0))
         
         # Fitness统计
@@ -91,21 +111,34 @@ def extract_history(checkpoint_data):
 
 def extract_archive_data(checkpoint_data):
     """从checkpoint提取archive中的个体数据"""
-    archive = checkpoint_data.get('archive', {})
+    # 支持两种格式：
+    # 1. dict with 'archive' key
+    # 2. list (取最后一个entry的archive，如果有的话)
+    archive = {}
+    
+    if isinstance(checkpoint_data, dict):
+        archive = checkpoint_data.get('archive', {})
+    elif isinstance(checkpoint_data, list) and len(checkpoint_data) > 0:
+        # 如果是list，尝试从最后一个entry获取archive
+        last_entry = checkpoint_data[-1]
+        if isinstance(last_entry, dict):
+            archive = last_entry.get('archive', {})
     
     fitness_list = []
     sparsity_list = []
     total_score_list = []
     
-    for individual in archive.values():
-        if isinstance(individual, dict):
-            fitness = individual.get('fitness', 0)
-            sparsity = individual.get('sparsity', 0)
-            total_score = individual.get('total_score', 0)
-            
-            fitness_list.append(fitness)
-            sparsity_list.append(sparsity)
-            total_score_list.append(total_score)
+    # archive可能是dict of dicts，也可能是dict of other formats
+    if isinstance(archive, dict):
+        for individual in archive.values():
+            if isinstance(individual, dict):
+                fitness = individual.get('fitness', 0)
+                sparsity = individual.get('sparsity', 0)
+                total_score = individual.get('total_score', 0)
+                
+                fitness_list.append(fitness)
+                sparsity_list.append(sparsity)
+                total_score_list.append(total_score)
     
     return {
         'fitness': np.array(fitness_list),
