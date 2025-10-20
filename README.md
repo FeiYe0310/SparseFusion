@@ -200,18 +200,26 @@ For each iteration:
 
 ```
 SparseFusion/
-├── run_evolution.py              # Original Natural Niches
-├── main_sparsity_aware.py        # NEW: Sparsity-aware entry point
-├── natural_niches_fn.py          # Original core logic
-├── natural_niches_sparsity_aware_fn.py  # NEW: Sparsity-aware core
-├── lib/                          # NEW: Wanda pruning tools
-│   ├── prune.py                  # Pruning algorithms
-│   ├── data.py                   # Data loading
-│   └── ...
-├── helper_fn.py                  # Helper functions
-├── config.py                     # Path configuration
-└── requirements.txt              # Dependencies
+├── docs/                      # Reference guides and deployment notes
+├── scripts/
+│   ├── deploy/                # Sync and infrastructure helpers
+│   ├── experiments/           # Common experiment launchers
+│   ├── tests/                 # Shell-based integration checks
+│   ├── run_merge.sh
+│   └── run_with_models.sh
+├── tools/                     # Standalone analysis & plotting utilities
+├── bfcl/                      # BFCL benchmark assets
+├── datasets/
+├── lib/                       # Wanda pruning utilities
+├── results/                   # Experiment outputs (gitignored)
+├── config.py                  # Path configuration
+├── main.py                    # Natural Niches entry point
+├── main_sparsity_aware.py     # Sparsity-aware entry point
+├── run_evolution.py           # Torchrun-ready launcher
+└── requirements.txt           # Dependencies
 ```
+
+Extensive setup and deployment documentation now lives under `docs/`, while shell launchers are grouped in `scripts/` and analysis helpers moved to `tools/` for easier discovery.
 
 ---
 
