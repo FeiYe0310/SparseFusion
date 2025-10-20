@@ -40,7 +40,7 @@ fi
 # 运行绘图脚本
 cd "$ROOTPATH/SparseFusion"
 
-python plot_checkpoint_comparison.py \
+python tools/plot_checkpoint_comparison.py \
     --baseline "$BASELINE_CHECKPOINT" \
     --sparsity "$SPARSITY_CHECKPOINT" \
     --output "$OUTPUT_PLOT"

@@ -6,6 +6,8 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 MODEL1="models/Qwen2.5-0.5B-Instruct"
 MODEL2="models/Qwen2.5-Coder-0.5B-Instruct"
 
@@ -37,7 +39,7 @@ echo "========================================"
 echo ""
 
 # 多GPU分布式运行（完全匹配sparsity-aware设置）
-GPUS_PER_NODE=8 ./run_sparsity_single_node.sh \
+GPUS_PER_NODE=8 "$SCRIPT_DIR/run_sparsity_single_node.sh" \
   --runs 1 \
   --model1_path ${MODEL1} \
   --model2_path ${MODEL2} \
@@ -60,5 +62,5 @@ echo "  Baseline:     omega=1.0, beta=0.0 (纯fitness)"
 echo "  Your method:  omega=0.5, beta=0.5 (fitness+sparsity)"
 echo ""
 echo "结果对比查看："
-echo "  python plot_training_curves.py --checkpoint_dir results/"
+echo "  python tools/plot_training_curves.py --checkpoint_dir results/"
 echo ""

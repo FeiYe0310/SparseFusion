@@ -4,13 +4,13 @@
 
 用法:
     # 画最新的checkpoint
-    python plot_training_curves.py
+    python tools/plot_training_curves.py
     
     # 画指定的checkpoint
-    python plot_training_curves.py results/checkpoint_run1_20231016.pkl
+    python tools/plot_training_curves.py results/checkpoint_run1_20231016.pkl
     
     # 持续监控（每30秒刷新）
-    python plot_training_curves.py --watch
+    python tools/plot_training_curves.py --watch
 """
 
 import pickle
@@ -230,16 +230,16 @@ def main():
         epilog="""
 示例:
   # 画最新checkpoint
-  python plot_training_curves.py
+  python tools/plot_training_curves.py
   
   # 画指定checkpoint
-  python plot_training_curves.py results/checkpoint_run1.pkl
+  python tools/plot_training_curves.py results/checkpoint_run1.pkl
   
   # 持续监控（每30秒刷新）
-  python plot_training_curves.py --watch
+  python tools/plot_training_curves.py --watch
   
   # 自定义刷新间隔
-  python plot_training_curves.py --watch --interval 60
+  python tools/plot_training_curves.py --watch --interval 60
         """
     )
     

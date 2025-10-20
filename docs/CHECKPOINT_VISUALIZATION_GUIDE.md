@@ -15,7 +15,7 @@
 
 ```bash
 cd /mnt/shared-storage-user/yefei/SparseFusion
-./run_plot_comparison.sh
+bash scripts/experiments/run_plot_comparison.sh
 ```
 
 这将使用以下默认checkpoint：
@@ -29,13 +29,13 @@ cd /mnt/shared-storage-user/yefei/SparseFusion
 BASELINE_CHECKPOINT="/path/to/baseline.pkl" \
 SPARSITY_CHECKPOINT="/path/to/sparsity.pkl" \
 OUTPUT_PLOT="my_comparison.png" \
-./run_plot_comparison.sh
+bash scripts/experiments/run_plot_comparison.sh
 ```
 
 ### 方法3: 直接使用Python脚本
 
 ```bash
-python plot_checkpoint_comparison.py \
+python tools/plot_checkpoint_comparison.py \
     --baseline /path/to/baseline.pkl \
     --sparsity /path/to/sparsity.pkl \
     --output comparison.png
@@ -91,7 +91,7 @@ python plot_checkpoint_comparison.py \
 | `OUTPUT_PLOT` | 输出图表文件名 | `comparison_baseline_vs_sparsity.png` |
 | `ROOTPATH` | 工作根目录 | `/mnt/shared-storage-user/yefei` |
 
-### plot_checkpoint_comparison.py 参数
+### tools/plot_checkpoint_comparison.py 参数
 
 | 参数 | 类型 | 必需 | 说明 |
 |------|------|------|------|
@@ -131,13 +131,13 @@ python plot_checkpoint_comparison.py \
 
 ```bash
 # 默认就是这个场景
-./run_plot_comparison.sh
+bash scripts/experiments/run_plot_comparison.sh
 ```
 
 ### 场景2: 对比不同超参数配置
 
 ```bash
-python plot_checkpoint_comparison.py \
+python tools/plot_checkpoint_comparison.py \
     --baseline results/sparsity_w0.50_b0.50.pkl \
     --sparsity results/sparsity_w0.80_b0.20.pkl \
     --output compare_hyperparams.png
@@ -146,7 +146,7 @@ python plot_checkpoint_comparison.py \
 ### 场景3: 对比不同剪枝方法
 
 ```bash
-python plot_checkpoint_comparison.py \
+python tools/plot_checkpoint_comparison.py \
     --baseline results/prune_magnitude_0.30.pkl \
     --sparsity results/prune_wanda_0.30.pkl \
     --output compare_pruning_methods.png
@@ -154,7 +154,7 @@ python plot_checkpoint_comparison.py \
 
 ## 🎨 图表自定义
 
-如需修改图表样式，可以编辑 `plot_checkpoint_comparison.py` 中的 `plot_comparison()` 函数：
+如需修改图表样式，可以编辑 `tools/plot_checkpoint_comparison.py` 中的 `plot_comparison()` 函数：
 
 - **颜色**: 修改 `'b-'`, `'r-'` 等颜色代码
 - **线型**: 修改 `'-'`, `'--'` 等线型
@@ -184,7 +184,7 @@ scp user@server:/path/to/comparison.png ./
 
 ## 📚 相关文件
 
-- `plot_checkpoint_comparison.py`: Python绘图脚本
+- `tools/plot_checkpoint_comparison.py`: Python绘图脚本
 - `run_plot_comparison.sh`: Shell启动脚本
 - `natural_niches_sparsity_aware_fn.py`: 生成checkpoint的主程序
 - `main_sparsity_aware.py`: 实验入口
@@ -193,17 +193,17 @@ scp user@server:/path/to/comparison.png ./
 
 1. **训练Baseline**:
    ```bash
-   ./run_baseline.sh
+   bash scripts/experiments/run_baseline.sh
    ```
 
 2. **训练Sparsity-Aware**:
    ```bash
-   ./run_sparsity_single_node.sh
+   bash scripts/experiments/run_sparsity_single_node.sh
    ```
 
 3. **可视化对比**:
    ```bash
-   ./run_plot_comparison.sh
+   bash scripts/experiments/run_plot_comparison.sh
    ```
 
 ---
@@ -211,4 +211,3 @@ scp user@server:/path/to/comparison.png ./
 **创建日期**: 2025-10-17  
 **作者**: SparseFusion Team  
 **版本**: 1.0
-

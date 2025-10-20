@@ -17,7 +17,7 @@
 cd /fs-computility/pdz-grp1/yefei.p/SparseFusion
 
 # 直接运行！
-bash RUN_BFCL_NOW.sh
+bash scripts/experiments/RUN_BFCL_NOW.sh
 ```
 
 **这个脚本会：**
@@ -135,7 +135,7 @@ fitness = competitive_normalize(all_scores)  # → 单个fitness值
 
 ### **Q1: BFCL数据集只有8个样本怎么办？**
 
-**A:** 已解决！运行`python convert_bfcl_data.py`转换官方数据，现在有258个样本。
+**A:** 已解决！运行`python tools/convert_bfcl_data.py`转换官方数据，现在有258个样本。
 
 ### **Q2: 如何验证BFCL评估是否工作？**
 
@@ -163,7 +163,7 @@ ls -lh results_bfcl_*/
 cat results_bfcl_*/*.json | grep -A10 "test_evaluations"
 
 # 绘制曲线
-python plot_training_curves.py --input results_bfcl_*/*.pkl
+python tools/plot_training_curves.py --input results_bfcl_*/*.pkl
 ```
 
 ---
@@ -208,7 +208,7 @@ Pop size=5, 3000 forward passes, eval_subset=30:
 
 全部OK后运行：
 ```bash
-bash RUN_BFCL_NOW.sh
+bash scripts/experiments/RUN_BFCL_NOW.sh
 ```
 
 ---
@@ -216,4 +216,3 @@ bash RUN_BFCL_NOW.sh
 ## 🎯 **就这么简单！**
 
 一键运行，坐等结果！ 🚀
-

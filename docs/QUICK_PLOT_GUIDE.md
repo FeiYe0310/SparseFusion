@@ -4,7 +4,7 @@
 
 ```bash
 cd /mnt/shared-storage-user/yefei/SparseFusion
-./run_plot_comparison.sh
+bash scripts/experiments/run_plot_comparison.sh
 ```
 
 这将对比以下两个checkpoints：
@@ -44,7 +44,7 @@ cd /mnt/shared-storage-user/yefei/SparseFusion
 ### 对比不同的checkpoints：
 
 ```bash
-python plot_checkpoint_comparison.py \
+python tools/plot_checkpoint_comparison.py \
     --baseline /path/to/checkpoint1.pkl \
     --sparsity /path/to/checkpoint2.pkl \
     --output my_comparison.png
@@ -56,7 +56,7 @@ python plot_checkpoint_comparison.py \
 BASELINE_CHECKPOINT="/path/to/baseline.pkl" \
 SPARSITY_CHECKPOINT="/path/to/sparsity.pkl" \
 OUTPUT_PLOT="my_plot.png" \
-./run_plot_comparison.sh
+bash scripts/experiments/run_plot_comparison.sh
 ```
 
 ## 📥 下载图表到本地

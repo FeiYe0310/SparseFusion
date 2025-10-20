@@ -59,7 +59,7 @@ if [ -d "models/Qwen2.5-0.5B-Instruct" ]; then
     echo "✅ 模型存在: models/Qwen2.5-0.5B-Instruct"
 else
     echo "⚠️  模型不存在: models/Qwen2.5-0.5B-Instruct"
-    echo "请确保模型路径正确，或修改RUN_BFCL_NOW.sh中的--model1_path参数"
+    echo "请确保模型路径正确，或修改scripts/experiments/RUN_BFCL_NOW.sh中的--model1_path参数"
 fi
 
 # 4. 检查Python依赖
@@ -145,9 +145,9 @@ fi
 echo ""
 echo "步骤6: 设置脚本权限"
 echo "----------------------------------------"
-chmod +x RUN_BFCL_NOW.sh
-chmod +x run_bfcl_quick_test.sh
-chmod +x test_bfcl.sh
+chmod +x scripts/experiments/RUN_BFCL_NOW.sh
+chmod +x scripts/experiments/run_bfcl_quick_test.sh
+chmod +x scripts/tests/test_bfcl.sh
 echo "✅ 脚本权限已设置"
 
 # 7. 环境变量检查
@@ -176,16 +176,15 @@ echo ""
 echo "现在可以运行实验:"
 echo ""
 echo "  方式1 (快速测试 - 2分钟):"
-echo "    bash test_bfcl.sh"
+echo "    bash scripts/tests/test_bfcl.sh"
 echo ""
 echo "  方式2 (小规模验证 - 1小时):"
-echo "    bash run_bfcl_quick_test.sh"
+echo "    bash scripts/experiments/run_bfcl_quick_test.sh"
 echo ""
 echo "  方式3 (完整实验 - 8-12小时):"
-echo "    bash RUN_BFCL_NOW.sh"
+echo "    bash scripts/experiments/RUN_BFCL_NOW.sh"
 echo ""
 echo "  方式4 (后台运行):"
-echo "    nohup bash RUN_BFCL_NOW.sh > bfcl_run.log 2>&1 &"
+echo "    nohup bash scripts/experiments/RUN_BFCL_NOW.sh > bfcl_run.log 2>&1 &"
 echo "    tail -f bfcl_run.log"
 echo ""
-

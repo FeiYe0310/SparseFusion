@@ -26,14 +26,14 @@ git add bfcl/data/bfcl_test_200.json
 git add bfcl/data/bfcl_test_simple.json
 
 # 添加脚本和文档
-git add convert_bfcl_data.py
-git add setup_bfcl.sh
-git add RUN_BFCL_NOW.sh
-git add run_bfcl_quick_test.sh
-git add run_bfcl_full_exp.sh
-git add test_bfcl.sh
-git add BFCL_INTEGRATION_DESIGN.md
-git add BFCL_QUICK_START.md
+git add tools/convert_bfcl_data.py
+git add scripts/deploy/setup_bfcl.sh
+git add scripts/experiments/RUN_BFCL_NOW.sh
+git add scripts/experiments/run_bfcl_quick_test.sh
+git add scripts/experiments/run_bfcl_full_exp.sh
+git add scripts/tests/test_bfcl.sh
+git add docs/BFCL_INTEGRATION_DESIGN.md
+git add docs/BFCL_QUICK_START.md
 
 # 添加.gitignore排除gorilla仓库
 echo "bfcl/gorilla/" >> .gitignore
@@ -56,7 +56,7 @@ New files:
 - bfcl_data_utils.py: BFCL data loading and preprocessing
 - bfcl_eval_utils.py: Function call parser and evaluator
 - bfcl/data/bfcl_test_200.json: Converted BFCL dataset
-- RUN_BFCL_NOW.sh: One-click run script
+- scripts/experiments/RUN_BFCL_NOW.sh: One-click run script
 - BFCL_QUICK_START.md: Usage guide
 
 Modified files:
@@ -77,5 +77,4 @@ echo ""
 echo "下一步: 在服务器上执行"
 echo "  cd /path/to/your/server/SparseFusion"
 echo "  git pull origin main"
-echo "  bash SERVER_SETUP.sh"
-
+echo "  bash scripts/deploy/SERVER_SETUP.sh"

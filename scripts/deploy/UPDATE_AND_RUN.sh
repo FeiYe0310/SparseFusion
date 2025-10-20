@@ -5,6 +5,8 @@
 
 set -e
 
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_SCRIPT="$SCRIPT_ROOT/experiments/run_sparsity_single_node.sh"
 echo "========================================"
 echo "  🚀 更新代码并运行Mini-Batch加速版本"
 echo "========================================"
@@ -32,7 +34,7 @@ echo "  - 预计速度：~10秒/iteration（原来60秒）"
 echo ""
 
 # 单GPU版本
-GPUS_PER_NODE=1 ./run_sparsity_single_node.sh \
+GPUS_PER_NODE=1 "$RUN_SCRIPT" \
   --runs 1 \
   --model1_path models/Qwen2.5-0.5B-Instruct \
   --model2_path models/Qwen2.5-Coder-0.5B-Instruct \
@@ -51,7 +53,7 @@ echo "  - results/checkpoints/  (每50步保存)"
 echo "  - results/*.pkl  (最终结果)"
 echo ""
 echo "画图命令："
-echo "  python plot_training_curves.py --checkpoint_dir results/checkpoints"
+echo "  python tools/plot_training_curves.py --checkpoint_dir results/checkpoints"
 echo ""
 
 
@@ -87,7 +89,7 @@ echo "  - 预计速度：~10秒/iteration（原来60秒）"
 echo ""
 
 # 单GPU版本
-GPUS_PER_NODE=1 ./run_sparsity_single_node.sh \
+GPUS_PER_NODE=1 "$RUN_SCRIPT" \
   --runs 1 \
   --model1_path models/Qwen2.5-0.5B-Instruct \
   --model2_path models/Qwen2.5-Coder-0.5B-Instruct \
@@ -106,7 +108,7 @@ echo "  - results/checkpoints/  (每50步保存)"
 echo "  - results/*.pkl  (最终结果)"
 echo ""
 echo "画图命令："
-echo "  python plot_training_curves.py --checkpoint_dir results/checkpoints"
+echo "  python tools/plot_training_curves.py --checkpoint_dir results/checkpoints"
 echo ""
 
 

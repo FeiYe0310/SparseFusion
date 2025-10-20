@@ -45,14 +45,14 @@ ls -lh bfcl_*.py
 # 应该看到: bfcl_data_utils.py, bfcl_eval_utils.py
 
 # 检查脚本
-ls -lh *.sh | grep -E "(SERVER|RUN_BFCL|test_bfcl)"
-# 应该看到: SERVER_SETUP.sh, RUN_BFCL_NOW.sh, test_bfcl.sh等
+find scripts -maxdepth 2 -type f -name "*.sh"
+# 应该看到: scripts/deploy/SERVER_SETUP.sh, scripts/experiments/RUN_BFCL_NOW.sh, scripts/tests/test_bfcl.sh 等
 ```
 
 ### **4️⃣ 运行设置脚本**
 
 ```bash
-bash SERVER_SETUP.sh
+bash scripts/deploy/SERVER_SETUP.sh
 ```
 
 **这个脚本会自动：**
@@ -76,7 +76,7 @@ bash SERVER_SETUP.sh
 #### **方式A: 单元测试（2分钟，推荐先跑）**
 
 ```bash
-bash test_bfcl.sh
+bash scripts/tests/test_bfcl.sh
 ```
 
 **测试内容：**
@@ -96,7 +96,7 @@ bash test_bfcl.sh
 #### **方式B: 快速验证实验（1-2小时）**
 
 ```bash
-bash run_bfcl_quick_test.sh
+bash scripts/experiments/run_bfcl_quick_test.sh
 ```
 
 **配置：**
@@ -109,10 +109,10 @@ bash run_bfcl_quick_test.sh
 
 ```bash
 # 前台运行（可以看到实时日志）
-bash RUN_BFCL_NOW.sh
+bash scripts/experiments/RUN_BFCL_NOW.sh
 
 # 或后台运行
-nohup bash RUN_BFCL_NOW.sh > bfcl_run.log 2>&1 &
+nohup bash scripts/experiments/RUN_BFCL_NOW.sh > bfcl_run.log 2>&1 &
 
 # 查看日志
 tail -f bfcl_run.log
@@ -131,7 +131,7 @@ tail -f bfcl_run.log
 
 ### **修改代理（如果服务器需要）**
 
-编辑 `SERVER_SETUP.sh` 或 `RUN_BFCL_NOW.sh`:
+编辑 `scripts/deploy/SERVER_SETUP.sh` 或 `scripts/experiments/RUN_BFCL_NOW.sh`:
 
 ```bash
 export https_proxy=http://your_proxy:port
@@ -140,7 +140,7 @@ export http_proxy=http://your_proxy:port
 
 ### **修改模型路径**
 
-编辑 `RUN_BFCL_NOW.sh`:
+编辑 `scripts/experiments/RUN_BFCL_NOW.sh`:
 
 ```bash
 --model1_path /your/path/to/model \
@@ -154,7 +154,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3  # 使用多GPU
 
 ### **调整实验参数**
 
-编辑 `RUN_BFCL_NOW.sh`:
+编辑 `scripts/experiments/RUN_BFCL_NOW.sh`:
 
 ```bash
 --pop_size 10 \              # 增大种群
@@ -190,7 +190,7 @@ jobs
 ls -lh results_bfcl_*/
 
 # 查看results.pkl（如果有plotting脚本）
-python plot_training_curves.py --input results_bfcl_*/*.pkl
+python tools/plot_training_curves.py --input results_bfcl_*/*.pkl
 ```
 
 ### **停止实验**
@@ -250,7 +250,7 @@ wget https://github.com/FeiYe0310/SparseFusion/raw/main/bfcl/data/bfcl_test_200.
 # 检查模型路径
 ls models/
 
-# 修改RUN_BFCL_NOW.sh中的模型路径
+# 修改 scripts/experiments/RUN_BFCL_NOW.sh 中的模型路径
 # 或者下载模型:
 cd models
 git clone https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
@@ -331,8 +331,8 @@ BFCL数据: bfcl/data/bfcl_test_200.json
 
 cd /path/to/SparseFusion
 git pull origin main
-bash SERVER_SETUP.sh
-nohup bash RUN_BFCL_NOW.sh > run.log 2>&1 &
+bash scripts/deploy/SERVER_SETUP.sh
+nohup bash scripts/experiments/RUN_BFCL_NOW.sh > run.log 2>&1 &
 tail -f run.log
 ```
 
@@ -347,4 +347,3 @@ tail -f run.log
 - 查看快速开始: `BFCL_QUICK_START.md`
 
 祝实验顺利！ 🎉
-

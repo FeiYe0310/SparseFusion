@@ -67,6 +67,5 @@ echo "✅ 所有BFCL功能测试通过!"
 echo "========================================"
 echo ""
 echo "接下来可以运行完整的实验："
-echo "  bash run_bfcl_quick_test.sh  # 快速验证"
-echo "  bash run_bfcl_full_exp.sh    # 完整实验"
-
+echo "  bash scripts/experiments/run_bfcl_quick_test.sh  # 快速验证"
+echo "  bash scripts/experiments/run_bfcl_full_exp.sh    # 完整实验"

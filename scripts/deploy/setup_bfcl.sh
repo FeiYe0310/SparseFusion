@@ -87,5 +87,4 @@ echo ""
 echo "下一步:"
 echo "  1. 查看数据: ls -lh bfcl/gorilla/berkeley-function-call-leaderboard/data/"
 echo "  2. 转换数据格式（如需要）"
-echo "  3. 运行BFCL测试: bash run_bfcl_quick_test.sh"
-
+echo "  3. 运行BFCL测试: bash scripts/experiments/run_bfcl_quick_test.sh"

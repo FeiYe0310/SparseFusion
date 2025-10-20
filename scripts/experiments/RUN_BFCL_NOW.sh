@@ -101,7 +101,7 @@ echo ""
 # Check BFCL data
 if [[ ! -f "$BFCL_DATA_PATH" ]]; then
   echo "❌ BFCL data not found: $BFCL_DATA_PATH" >&2
-  echo "Please run: python convert_bfcl_data.py" >&2
+  echo "Please run: python tools/convert_bfcl_data.py" >&2
   exit 1
 fi
 echo "✅ BFCL data ready: $BFCL_DATA_PATH"

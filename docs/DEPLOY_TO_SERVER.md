@@ -45,10 +45,10 @@ cd /path/to/your/SparseFusion
 git pull origin main
 
 # 3. 运行设置脚本
-bash SERVER_SETUP.sh
+bash scripts/deploy/SERVER_SETUP.sh
 
 # 4. 运行实验
-bash RUN_BFCL_NOW.sh
+bash scripts/experiments/RUN_BFCL_NOW.sh
 ```
 
 **就这么简单！** 数据随代码一起同步。
@@ -76,7 +76,7 @@ git add natural_niches_sparsity_aware_fn.py
 git add main_sparsity_aware.py
 git add bfcl_data_utils.py
 git add bfcl_eval_utils.py
-git add convert_bfcl_data.py
+git add tools/convert_bfcl_data.py
 git add *.sh *.md
 
 git commit -m "🎯 Add BFCL multi-task evaluation (code only)"
@@ -92,14 +92,14 @@ cd /path/to/your/SparseFusion
 git pull origin main
 
 # 2. 下载BFCL数据并转换
-bash setup_bfcl.sh  # 会下载gorilla仓库
-python convert_bfcl_data.py  # 转换数据
+bash scripts/deploy/setup_bfcl.sh  # 会下载gorilla仓库
+python tools/convert_bfcl_data.py  # 转换数据
 
 # 3. 设置环境
-bash SERVER_SETUP.sh
+bash scripts/deploy/SERVER_SETUP.sh
 
 # 4. 运行实验
-bash RUN_BFCL_NOW.sh
+bash scripts/experiments/RUN_BFCL_NOW.sh
 ```
 
 ---
@@ -140,7 +140,7 @@ git add main_sparsity_aware.py
 git add bfcl_data_utils.py
 git add bfcl_eval_utils.py
 git add bfcl/data/bfcl_test_200.json
-git add convert_bfcl_data.py
+git add tools/convert_bfcl_data.py
 git add *.sh
 git add BFCL*.md
 
@@ -159,7 +159,7 @@ Features:
 - Full documentation
 
 Usage:
-  bash RUN_BFCL_NOW.sh
+  bash scripts/experiments/RUN_BFCL_NOW.sh
 "
 
 # 6. 推送
@@ -183,16 +183,16 @@ ls -lh bfcl/data/bfcl_test_200.json  # 应该看到380KB
 ls -lh bfcl_*.py  # 应该看到两个py文件
 
 # 5. 运行设置脚本
-bash SERVER_SETUP.sh
+bash scripts/deploy/SERVER_SETUP.sh
 
 # 6a. 快速测试（2分钟）
-bash test_bfcl.sh
+bash scripts/tests/test_bfcl.sh
 
 # 6b. 或小规模验证（1小时）
-bash run_bfcl_quick_test.sh
+bash scripts/experiments/run_bfcl_quick_test.sh
 
 # 6c. 或完整实验（8-12小时，后台运行）
-nohup bash RUN_BFCL_NOW.sh > bfcl_run.log 2>&1 &
+nohup bash scripts/experiments/RUN_BFCL_NOW.sh > bfcl_run.log 2>&1 &
 tail -f bfcl_run.log  # 查看日志
 
 # 查看后台任务
@@ -225,7 +225,7 @@ export http_proxy=YOUR_PROXY
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # 增加并行度
-# 修改RUN_BFCL_NOW.sh中的POP_SIZE
+# 修改scripts/experiments/RUN_BFCL_NOW.sh中的POP_SIZE
 ```
 
 ---
@@ -267,8 +267,8 @@ git stash pop
 git pull origin main
 
 # 方案2: 手动下载并转换
-bash setup_bfcl.sh
-python convert_bfcl_data.py
+bash scripts/deploy/setup_bfcl.sh
+python tools/convert_bfcl_data.py
 
 # 方案3: 从当前机器scp传输
 # 在当前机器：
@@ -281,7 +281,7 @@ scp bfcl/data/bfcl_test_200.json user@server:/path/to/SparseFusion/bfcl/data/
 # 检查模型路径
 ls models/
 
-# 修改RUN_BFCL_NOW.sh使用正确的模型路径
+# 修改scripts/experiments/RUN_BFCL_NOW.sh使用正确的模型路径
 # 将--model1_path改为实际路径
 ```
 
@@ -303,7 +303,7 @@ ps aux | grep python
 ls -lh results_bfcl_*/
 
 # 中途查看结果
-python plot_training_curves.py --input results_bfcl_*/*.pkl
+python tools/plot_training_curves.py --input results_bfcl_*/*.pkl
 ```
 
 ---
@@ -338,8 +338,8 @@ bash PUSH_TO_GITHUB.sh  # 一键提交推送
 # === 服务器 ===
 cd /path/to/SparseFusion
 git pull origin main          # 拉取代码
-bash SERVER_SETUP.sh          # 设置环境
-nohup bash RUN_BFCL_NOW.sh > run.log 2>&1 &  # 后台运行
+bash scripts/deploy/SERVER_SETUP.sh          # 设置环境
+nohup bash scripts/experiments/RUN_BFCL_NOW.sh > run.log 2>&1 &  # 后台运行
 tail -f run.log               # 监控日志
 ```
 

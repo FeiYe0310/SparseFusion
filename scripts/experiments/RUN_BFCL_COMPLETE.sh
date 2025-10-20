@@ -132,7 +132,7 @@ echo "────────────────────────�
 # 检查BFCL数据
 if [[ ! -f "$BFCL_DATA_PATH" ]]; then
   echo "❌ BFCL数据不存在: $BFCL_DATA_PATH" >&2
-  echo "请运行: python convert_bfcl_data.py" >&2
+  echo "请运行: python tools/convert_bfcl_data.py" >&2
   exit 1
 fi
 SAMPLE_COUNT=$(python -c "import json; print(len(json.load(open('$BFCL_DATA_PATH'))))" 2>/dev/null || echo "0")
@@ -261,7 +261,7 @@ if [ $EXIT_CODE -eq 0 ]; then
   echo "  ls -lh $OUTPUT_DIR/"
   echo ""
   echo "📈 绘制训练曲线:"
-  echo "  python plot_training_curves.py --input $OUTPUT_DIR/*.pkl"
+  echo "  python tools/plot_training_curves.py --input $OUTPUT_DIR/*.pkl"
   echo ""
   
 else
@@ -277,4 +277,3 @@ else
 fi
 
 echo "════════════════════════════════════════════════════════════════════════"
-

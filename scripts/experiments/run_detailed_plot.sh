@@ -22,7 +22,7 @@ echo ""
 
 cd "$ROOTPATH/SparseFusion"
 
-python plot_detailed_comparison.py \
+python tools/plot_detailed_comparison.py \
     --baseline "$BASELINE_CHECKPOINT" \
     --sparsity "$SPARSITY_CHECKPOINT" \
     --output "$OUTPUT_PLOT"
