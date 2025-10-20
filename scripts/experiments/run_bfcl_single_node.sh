@@ -64,6 +64,13 @@ BFCL_DATA_PATH="${BFCL_DATA_PATH:-bfcl/data/bfcl_test_200.json}"
 GSM8K_WEIGHT="${GSM8K_WEIGHT:-0.5}"
 BFCL_WEIGHT="${BFCL_WEIGHT:-0.5}"
 
+# 🔄 Dynamic Sparsity parameters (NEW!)
+USE_DYNAMIC_SPARSITY="${USE_DYNAMIC_SPARSITY:-false}"
+SPARSITY_MIN="${SPARSITY_MIN:-0.1}"
+SPARSITY_MAX="${SPARSITY_MAX:-0.6}"
+SPARSITY_T0="${SPARSITY_T0:-100}"
+SPARSITY_T_MULT="${SPARSITY_T_MULT:-2}"
+
 # Model paths
 MODEL1_PATH="${MODEL1_PATH:-models/Qwen2.5-0.5B-Instruct}"
 MODEL2_PATH="${MODEL2_PATH:-models/Qwen2.5-0.5B-Instruct}"
@@ -95,6 +102,17 @@ if [[ "$USE_BFCL_EVAL" == "true" ]]; then
     --bfcl_data_path "$BFCL_DATA_PATH"
     --gsm8k_weight "$GSM8K_WEIGHT"
     --bfcl_weight "$BFCL_WEIGHT"
+  )
+fi
+
+# Add Dynamic Sparsity parameters if enabled
+if [[ "$USE_DYNAMIC_SPARSITY" == "true" ]]; then
+  MAIN_ARGS+=(
+    --use_dynamic_sparsity
+    --sparsity_min "$SPARSITY_MIN"
+    --sparsity_max "$SPARSITY_MAX"
+    --sparsity_t0 "$SPARSITY_T0"
+    --sparsity_t_mult "$SPARSITY_T_MULT"
   )
 fi
 

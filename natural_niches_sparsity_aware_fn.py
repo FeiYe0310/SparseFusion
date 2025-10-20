@@ -5,6 +5,7 @@ This module extends the original Natural Niches algorithm by:
 1. Adding sparsity scoring alongside fitness scoring
 2. Integrating Wanda pruning for active sparsification
 3. Using Total Score (fitness + sparsity) for selection and archiving
+4. Dynamic sparsity scheduling with Cosine Annealing and Warm Restarts
 
 The core architecture and evaluation logic remain IDENTICAL to the original.
 """
@@ -114,6 +115,83 @@ def _init_distributed_if_needed() -> tuple[int, int]:
 # ==============================================================================
 # SPARSITY-RELATED FUNCTIONS (NEW)
 # ==============================================================================
+
+def calculate_dynamic_sparsity(
+    current_iteration: int,
+    eta_min: float,
+    eta_max: float,
+    t0: int,
+    t_mult: int
+) -> float:
+    """
+    使用带热重启的余弦退火（修改为正弦）计算动态剪枝稀疏度
+    
+    基于论文: SGDR: Stochastic Gradient Descent with Warm Restarts (https://arxiv.org/abs/1608.03983)
+    修改点：使用 sin(pi/2) 替代原文的 cos，实现 warm-up 效果
+    
+    公式：
+        eta_t = eta_min + 0.5 * (eta_max - eta_min) * (1 + sin(T_cur/T_i * pi/2))
+    
+    其中：
+        - T_cur: 当前周期内已经过的迭代次数
+        - T_i: 当前周期的总迭代次数
+        - 每个重启后，T_i *= t_mult（周期长度变化）
+    
+    设计思路：
+        1. 使用 sin(pi/2) 让稀疏度从 eta_min 平滑增长到 eta_max（warm-up）
+        2. 在进化初期使用小稀疏度，保护高fitness但低sparsity的优秀个体
+        3. 随着进化推进，逐渐探索更高的稀疏度空间
+        4. 周期性重启避免算法陷入特定稀疏度的"舒适区"
+        5. 增加种群在不同稀疏生态位(sparsity niches)上的多样性
+    
+    Args:
+        current_iteration: 当前的进化代数（从0开始）
+        eta_min: 稀疏度的最小值（例如 0.1）
+        eta_max: 稀疏度的最大值（例如 0.6）
+        t0: 第一个周期的长度（迭代次数，例如 100）
+        t_mult: 每次重启后周期长度的乘数（例如 2 表示每次翻倍，1 表示固定周期）
+    
+    Returns:
+        计算出的当前稀疏度值（在 [eta_min, eta_max] 范围内）
+    
+    示例：
+        >>> # 第一个周期100次迭代，每次周期翻倍，稀疏度在0.1-0.6之间变化
+        >>> for i in range(400):
+        ...     sparsity = calculate_dynamic_sparsity(i, 0.1, 0.6, 100, 2)
+        ...     print(f"Iter {i}: sparsity={sparsity:.4f}")
+        
+        输出：
+        Iter 0: sparsity=0.1000    # 第1周期开始（0-99），从最小值开始
+        Iter 50: sparsity=0.2853   # 第1周期中点
+        Iter 99: sparsity=0.6000   # 第1周期结束，达到最大值
+        Iter 100: sparsity=0.1000  # 第2周期开始（100-299），重启！
+        Iter 150: sparsity=0.2146  # 第2周期25%处
+        Iter 200: sparsity=0.3500  # 第2周期50%处
+        Iter 299: sparsity=0.6000  # 第2周期结束
+        Iter 300: sparsity=0.1000  # 第3周期开始（300-699），重启！
+    """
+    t_i = float(t0)
+    t_cur = float(current_iteration)
+    
+    # 确定当前是第几个周期以及在该周期内的位置
+    while t_cur >= t_i:
+        t_cur -= t_i
+        t_i *= t_mult
+    
+    # 应用正弦预热公式
+    # T_cur / T_i: 从 0 增长到 1（表示在周期内的进度）
+    # * pi/2: 映射到 [0, pi/2]
+    # sin(...): 从 0 增长到 1（正弦在 [0, pi/2] 区间单调递增）
+    # (1 + sin(...)): 从 1 增长到 2
+    # 0.5 * (1 + sin(...)): 从 0.5 增长到 1
+    # eta_min + (eta_max - eta_min) * ...: 从 eta_min 增长到 eta_max
+    sparsity_ratio = 0.5 * (1 + math.sin((t_cur / t_i) * math.pi / 2))
+    
+    current_sparsity = eta_min + (eta_max - eta_min) * sparsity_ratio
+    
+    # 安全边界检查（理论上不需要，但保险起见）
+    return max(eta_min, min(current_sparsity, eta_max))
+
 
 def compute_sparsity(params: jnp.ndarray, epsilon: float = 1e-10) -> float:
     """
@@ -760,6 +838,12 @@ def run_natural_niches_sparsity_aware(
     bfcl_data_path: str = "bfcl/data/bfcl_test_200.json",  # BFCL数据路径
     gsm8k_weight: float = 0.5,  # GSM8K任务权重
     bfcl_weight: float = 0.5,  # BFCL任务权重
+    # 🔄 NEW: Dynamic Sparsity with Warm Restarts
+    use_dynamic_sparsity: bool = False,  # 是否启用动态稀疏度调度
+    sparsity_min: float = 0.1,  # 最小稀疏度 (eta_min)
+    sparsity_max: float = 0.6,  # 最大稀疏度 (eta_max)
+    sparsity_t0: int = 100,  # 第一个周期的迭代次数
+    sparsity_t_mult: int = 2,  # 周期长度乘数（1=固定周期，2=每次翻倍）
 ) -> list:
     """
     Run Natural Niches with Sparsity-Aware Selection and Wanda Pruning
@@ -774,6 +858,14 @@ def run_natural_niches_sparsity_aware(
         log_sparsity_stats: 是否记录稀疏度统计 (default: False)
         eval_subset_size: 每轮评估的样本数 (None=全部数据, 30=随机采样30个)
                          【加速】可显著减少评估时间
+        
+        🔄 动态稀疏度调度参数（基于Cosine Annealing with Warm Restarts）:
+        use_dynamic_sparsity: 启用动态稀疏度调度 (default: False)
+                             若启用，将忽略 pruning_sparsity 参数
+        sparsity_min: 稀疏度最小值 (default: 0.1)
+        sparsity_max: 稀疏度最大值 (default: 0.6)
+        sparsity_t0: 第一个周期的迭代次数 (default: 100)
+        sparsity_t_mult: 周期长度乘数 (default: 2, 即每次翻倍; 1=固定周期)
     
     其他参数与原始run_natural_niches相同。
     """
@@ -787,8 +879,8 @@ def run_natural_niches_sparsity_aware(
         not no_splitpoint,
     )
     
-    # 确定是否启用剪枝
-    enable_pruning = pruning_sparsity > 0.0
+    # 确定是否启用剪枝：动态稀疏度或静态稀疏度任一启用即可
+    enable_pruning = (pruning_sparsity > 0.0) or use_dynamic_sparsity
 
     # --- Multi-GPU Distributed Setup (IDENTICAL TO ORIGINAL) ---
     if distributed:
@@ -1030,7 +1122,13 @@ def run_natural_niches_sparsity_aware(
         if is_main_process:
             print("Setup complete. Starting evolution with Sparsity-Aware Selection.")
             if enable_pruning:
-                print(f"🔪 Pruning ENABLED: method={pruning_method}, target_sparsity={pruning_sparsity}")
+                if use_dynamic_sparsity:
+                    print(f"🔄 Dynamic Sparsity ENABLED: method={pruning_method}")
+                    print(f"   Sparsity range: [{sparsity_min:.2f}, {sparsity_max:.2f}]")
+                    print(f"   First cycle: {sparsity_t0} iterations")
+                    print(f"   Cycle multiplier: {sparsity_t_mult}x")
+                else:
+                    print(f"🔪 Pruning ENABLED: method={pruning_method}, target_sparsity={pruning_sparsity}")
             print(f"📊 Scoring weights: ω={omega} (fitness), β={beta} (sparsity)")
 
         # --- JIT Compilation of Update Function ---
@@ -1139,6 +1237,30 @@ def run_natural_niches_sparsity_aware(
                     # 2. Apply pruning to parents (NEW)
                     # 使用PyTorch+NumPy的剪枝方案（已修复bfloat16问题）
                     if enable_pruning:
+                        # 🔄 动态计算当前迭代的稀疏度
+                        if use_dynamic_sparsity:
+                            current_pruning_sparsity = calculate_dynamic_sparsity(
+                                current_iteration=i,
+                                eta_min=sparsity_min,
+                                eta_max=sparsity_max,
+                                t0=sparsity_t0,
+                                t_mult=sparsity_t_mult
+                            )
+                            # 日志：每10步提示一次，并在每个周期起点提示重启
+                            need_periodic_log = (i % 10 == 0)
+                            # 计算当前周期长度，用于检测重启点（Warm Restart）
+                            ti_len = int(sparsity_t0)
+                            remain = int(i)
+                            while remain >= ti_len:
+                                remain -= ti_len
+                                ti_len *= int(sparsity_t_mult)
+                            is_restart_step = (remain == 0)
+                            if need_periodic_log or is_restart_step:
+                                prefix = "[Restart] " if is_restart_step else ""
+                                print(f"\n🔄 {prefix}[Iter {i}] Dynamic sparsity: {current_pruning_sparsity:.4f}")
+                        else:
+                            current_pruning_sparsity = pruning_sparsity
+                        
                         try:
                             parents_f32 = (
                                 prune_with_wanda(
@@ -1146,7 +1268,7 @@ def run_natural_niches_sparsity_aware(
                                     model_skeleton,
                                     param_shapes,
                                     tokenizer,
-                                    pruning_sparsity,
+                                    current_pruning_sparsity,
                                     device
                                 ).astype(jnp.float32),
                                 prune_with_wanda(
@@ -1154,7 +1276,7 @@ def run_natural_niches_sparsity_aware(
                                     model_skeleton,
                                     param_shapes,
                                     tokenizer,
-                                    pruning_sparsity,
+                                    current_pruning_sparsity,
                                     device
                                 ).astype(jnp.float32),
                             )

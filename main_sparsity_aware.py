@@ -76,6 +76,18 @@ def parse_arguments():
                         help="Weight for GSM8K task in multi-task learning")
     parser.add_argument("--bfcl_weight", type=float, default=0.5,
                         help="Weight for BFCL task in multi-task learning")
+    
+    # 🔄 动态稀疏度调度参数（Cosine Annealing with Warm Restarts）
+    parser.add_argument("--use_dynamic_sparsity", action="store_true",
+                        help="Enable dynamic sparsity scheduling (overrides --pruning_sparsity)")
+    parser.add_argument("--sparsity_min", type=float, default=0.1,
+                        help="Minimum sparsity value for dynamic scheduling (default: 0.1)")
+    parser.add_argument("--sparsity_max", type=float, default=0.6,
+                        help="Maximum sparsity value for dynamic scheduling (default: 0.6)")
+    parser.add_argument("--sparsity_t0", type=int, default=100,
+                        help="Number of iterations in the first cycle (default: 100)")
+    parser.add_argument("--sparsity_t_mult", type=int, default=2,
+                        help="Cycle length multiplier after each restart (default: 2, i.e., doubling; 1=fixed)")
 
     return parser.parse_args()
 
@@ -104,12 +116,18 @@ def main():
     print(f"  α (alpha): {args.alpha} - Fitness normalization")
     print(f"  ε (epsilon): {args.epsilon} - Zero threshold")
     print(f"\nPruning Parameters:")
-    if args.pruning_sparsity > 0:
+    if args.use_dynamic_sparsity:
+        print(f"  🔄 Dynamic Sparsity ENABLED")
+        print(f"  Sparsity range: [{args.sparsity_min:.2f}, {args.sparsity_max:.2f}]")
+        print(f"  First cycle: {args.sparsity_t0} iterations")
+        print(f"  Cycle multiplier: {args.sparsity_t_mult}x")
+        print(f"  Method: {args.pruning_method}")
+    elif args.pruning_sparsity > 0:
         print(f"  🔪 Pruning ENABLED")
         print(f"  Target sparsity: {args.pruning_sparsity}")
         print(f"  Method: {args.pruning_method}")
     else:
-        print(f"  Pruning DISABLED (set --pruning_sparsity > 0 to enable)")
+        print(f"  Pruning DISABLED (set --pruning_sparsity > 0 or --use_dynamic_sparsity to enable)")
     print(f"\nExperimental Setup:")
     print(f"  Crossover: {'Disabled' if args.no_crossover else 'Enabled'}")
     print(f"  Splitpoint: {'Disabled' if args.no_splitpoint else 'Enabled'}")
@@ -151,6 +169,12 @@ def main():
         bfcl_data_path=args.bfcl_data_path,
         gsm8k_weight=args.gsm8k_weight,
         bfcl_weight=args.bfcl_weight,
+        # 🔄 动态稀疏度参数
+        use_dynamic_sparsity=args.use_dynamic_sparsity,
+        sparsity_min=args.sparsity_min,
+        sparsity_max=args.sparsity_max,
+        sparsity_t0=args.sparsity_t0,
+        sparsity_t_mult=args.sparsity_t_mult,
     )
 
     # Save results
