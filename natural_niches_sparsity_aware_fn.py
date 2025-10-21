@@ -2067,7 +2067,6 @@ def create_mbpp_evaluation_fn(
                     attention_mask=attention_mask,
                     max_new_tokens=512,  # MBPP可能需要更长的代码
                     do_sample=False,
-                    temperature=0.2,  # 低温度确保稳定性
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
@@ -2292,7 +2291,6 @@ def create_dot_eval_fn(
                     attention_mask=attention_mask,
                     max_new_tokens=64,
                     do_sample=False,
-                    temperature=0.2,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
