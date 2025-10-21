@@ -61,6 +61,8 @@ def parse_arguments():
                         help="Log detailed sparsity statistics during evolution")
     parser.add_argument("--output_dir", type=str, default="results",
                         help="Output directory for results")
+    parser.add_argument("--no_save_best_model", action="store_true",
+                        help="Do not save the final best model .npz; only save results .pkl/.json")
     
     # 🚀 加速参数
     parser.add_argument("--eval_subset_size", type=int, default=None,
@@ -220,6 +222,7 @@ def main():
         sparsity_max=args.sparsity_max,
         sparsity_t0=args.sparsity_t0,
         sparsity_t_mult=args.sparsity_t_mult,
+        save_best_model=(not args.no_save_best_model),
     )
 
     # Save results
@@ -236,11 +239,35 @@ def main():
     if args.no_matchmaker and not args.no_crossover:
         filename_parts.append("no_matchmaker")
     
-    # Add parameter info
+    # Add core param info (fitness/sparsity/tau)
     filename_parts.append(f"w{args.omega:.2f}_b{args.beta:.2f}_t{args.tau:.2f}")
+
+    # Add run scale info
+    filename_parts.append(f"pop{args.pop_size}")
+    filename_parts.append(f"fp{args.total_forward_passes}")
+    filename_parts.append(f"runs{args.runs}")
+    if args.eval_subset_size:
+        filename_parts.append(f"subset{args.eval_subset_size}")
+
+    # Add task/weight info (compact)
+    filename_parts.append(f"gsm{args.gsm8k_weight:.2f}")
+    if args.use_bfcl_eval:
+        filename_parts.append(f"bfcl{args.bfcl_weight:.2f}")
+    if args.use_mbpp_eval:
+        filename_parts.append(f"mbpp{args.mbpp_weight:.2f}")
+    if args.use_mult4_eval:
+        filename_parts.append(f"m4{args.mult4_weight:.2f}")
+    if args.use_mult5_eval:
+        filename_parts.append(f"m5{args.mult5_weight:.2f}")
+    if args.use_bool_eval:
+        filename_parts.append(f"bool{args.bool_weight:.2f}")
     
-    # Add pruning info if enabled
-    if args.pruning_sparsity > 0:
+    # Add pruning/dynamic sparsity info
+    if args.use_dynamic_sparsity:
+        filename_parts.append(
+            f"dyn{args.sparsity_min:.2f}-{args.sparsity_max:.2f}"
+        )
+    elif args.pruning_sparsity > 0:
         filename_parts.append(f"prune_{args.pruning_method}_{args.pruning_sparsity:.2f}")
     
     base_filename = "_".join(filename_parts)

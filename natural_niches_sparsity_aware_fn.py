@@ -893,6 +893,7 @@ def run_natural_niches_sparsity_aware(
     mult4_weight: float = 0.0,
     mult5_weight: float = 0.0,
     bool_weight: float = 0.0,
+    save_best_model: bool = True,
 ) -> list:
     """
     Run Natural Niches with Sparsity-Aware Selection and Wanda Pruning
@@ -1673,8 +1674,8 @@ def run_natural_niches_sparsity_aware(
         if dist_enabled:
             dist.barrier()
 
-        # --- Save Final Best Model (Main Process Only) ---
-        if is_main_process:
+        # --- Save Final Best Model (Main Process Only, optional) ---
+        if is_main_process and save_best_model:
             if runs > 0:
                 # Find best based on Total Score
                 total_scores = compute_total_scores(
@@ -1688,9 +1689,39 @@ def run_natural_niches_sparsity_aware(
                 from datetime import datetime
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Compact tags for filename for easier experiment identification
+                tags = [
+                    f"pop{pop_size}",
+                    f"fp{total_forward_passes}",
+                    f"runs{runs}",
+                    f"w{omega:.2f}",
+                    f"b{beta:.2f}",
+                    f"t{tau:.2f}",
+                ]
+                if eval_subset_size is not None:
+                    tags.append(f"subset{eval_subset_size}")
+                # Task weights
+                tags.append(f"gsm{gsm8k_weight:.2f}")
+                if use_bfcl_eval and bfcl_dataset is not None:
+                    tags.append(f"bfcl{bfcl_weight:.2f}")
+                if use_mbpp_eval and mbpp_dataset is not None:
+                    tags.append(f"mbpp{mbpp_weight:.2f}")
+                if use_mult4_eval:
+                    tags.append(f"m4{mult4_weight:.2f}")
+                if use_mult5_eval:
+                    tags.append(f"m5{mult5_weight:.2f}")
+                if use_bool_eval:
+                    tags.append(f"bool{bool_weight:.2f}")
+                # Pruning/dynamic sparsity
+                if use_dynamic_sparsity:
+                    tags.append(f"dyn{sparsity_min:.2f}-{sparsity_max:.2f}")
+                elif pruning_sparsity > 0:
+                    tags.append(f"prune_{pruning_method}_{pruning_sparsity:.2f}")
+
+                tag_str = "_".join(tags)
                 save_path = os.path.join(
                     RESULTS_DIR,
-                    f"best_model_sparsity_aware_run_{run+1}_{timestamp}.npz",
+                    f"best_model_{tag_str}_{timestamp}.npz",
                 )
 
                 print(
