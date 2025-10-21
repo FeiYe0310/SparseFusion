@@ -1583,68 +1583,47 @@ def run_natural_niches_sparsity_aware(
                 if dist_enabled:
                     dist.barrier()
 
-                # --- Periodic Full Archive Evaluation (IDENTICAL TO ORIGINAL) ---
+                # --- Periodic Full Archive Reporting: print fitness instead of GSM8K accuracy ---
                 if (i + 1) % 10 == 0:
                     if is_main_process:
                         print(
-                            f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
+                            f"\n--- [Step {i+1}/{total_forward_passes}] Archive fitness snapshot ---"
                         )
 
-                    for j in range(pop_size):
-                        if dist_enabled:
-                            if is_main_process:
-                                individual_params = archive[j]
-                                params_tensor = torch.from_numpy(
-                                    np.array(individual_params.astype(jnp.float32))
-                                )
-                            else:
-                                params_tensor = torch.empty(
-                                    num_params_llm, dtype=torch.float32
-                                )
+                        # Compute per-individual fitness (normalized) on current training scores
+                        fitness_vector = compute_normalized_fitness(
+                            scores, alpha, num_tasks
+                        )
 
-                            # Move to GPU for NCCL backend
-                            params_tensor = params_tensor.to(device)
-                            dist.broadcast(params_tensor, src=0)
-                            # Move back to CPU for numpy conversion
-                            params_tensor = params_tensor.cpu()
-                            params_bf16 = jnp.array(params_tensor.numpy()).astype(
-                                jnp.bfloat16
-                            )
-                        else:
-                            params_bf16 = archive[j]
-
-                        test_scores_vector = test_eval_fn(params_bf16)
-
-                        if is_main_process:
-                            acc = jnp.mean(test_scores_vector)
-
-                            # Log sparsity alongside accuracy
+                        for j in range(pop_size):
+                            ind_fitness = float(fitness_vector[j])
                             if log_sparsity_stats:
-                                ind_sparsity = compute_sparsity(params_bf16, epsilon)
+                                ind_sparsity = compute_sparsity(archive[j], epsilon)
                                 print(
                                     f"  > Archive Individual {j+1}/{pop_size} | "
-                                    f"Test Acc: {acc:.4f} | Sparsity: {ind_sparsity:.4f}"
+                                    f"Fitness: {ind_fitness:.4f} | Sparsity: {ind_sparsity:.4f}"
                                 )
                             else:
                                 print(
-                                    f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
+                                    f"  > Archive Individual {j+1}/{pop_size} | Fitness: {ind_fitness:.4f}"
                                 )
 
-                            # Record test evaluation results
-                            if "test_evaluations" not in results[run]:
-                                results[run]["test_evaluations"] = []
+                            # Record fitness snapshot (for analysis)
+                            if "fitness_evaluations" not in results[run]:
+                                results[run]["fitness_evaluations"] = []
 
-                            test_eval_stats = {
-                                "iteration": i + 1,
-                                "individual": j + 1,
-                                "test_accuracy": float(acc),
-                                "sparsity": (
-                                    float(compute_sparsity(params_bf16, epsilon))
-                                    if log_sparsity_stats
-                                    else None
-                                ),
-                            }
-                            results[run]["test_evaluations"].append(test_eval_stats)
+                            results[run]["fitness_evaluations"].append(
+                                {
+                                    "iteration": i + 1,
+                                    "individual": j + 1,
+                                    "fitness": ind_fitness,
+                                    "sparsity": (
+                                        float(compute_sparsity(archive[j], epsilon))
+                                        if log_sparsity_stats
+                                        else None
+                                    ),
+                                }
+                            )
 
                 # --- Periodic Checkpoint Save (Every 50 steps to prevent data loss) ---
                 if (i + 1) % 1000 == 0 and is_main_process:
