@@ -2160,19 +2160,21 @@ def create_multi_task_evaluation_fn(
         return_subset_only=True,  # 多任务：不扩展，直接返回子集分数
     )
     
-    # 创建BFCL评估函数
-    bfcl_eval_fn = create_bfcl_evaluation_fn(
-        model_skeleton,
-        param_shapes,
-        bfcl_dataset,
-        tokenizer,
-        batch_size=batch_size,
-        distributed=distributed,
-        world_size=world_size,
-        rank=rank,
-        eval_subset_size=eval_subset_size,
-        return_subset_only=True,  # 多任务评估：不进行分布式聚合
-    )
+    # 创建BFCL评估函数（仅当提供了数据集）
+    bfcl_eval_fn = None
+    if bfcl_dataset is not None:
+        bfcl_eval_fn = create_bfcl_evaluation_fn(
+            model_skeleton,
+            param_shapes,
+            bfcl_dataset,
+            tokenizer,
+            batch_size=batch_size,
+            distributed=distributed,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=eval_subset_size,
+            return_subset_only=True,  # 多任务评估：不进行分布式聚合
+        )
     
     # 创建MBPP评估函数（如果提供了数据集）
     mbpp_eval_fn = None
@@ -2217,8 +2219,9 @@ def create_multi_task_evaluation_fn(
         scores_list = []
         # GSM8K
         scores_list.append(gsm8k_eval_fn(flat_params))
-        # BFCL
-        scores_list.append(bfcl_eval_fn(flat_params))
+        # BFCL（可选）
+        if bfcl_eval_fn is not None:
+            scores_list.append(bfcl_eval_fn(flat_params))
         # MBPP（可选）
         if mbpp_eval_fn is not None:
             scores_list.append(mbpp_eval_fn(flat_params))
