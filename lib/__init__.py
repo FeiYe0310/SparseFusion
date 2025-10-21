@@ -1,22 +1,11 @@
 """
-Pruning tools for SparseFusion
+Lightweight package initializer for lib.
 
-Migrated from Wanda project
+Note:
+- We intentionally avoid importing heavy submodules (e.g., prune) here to
+  prevent side effects or syntax errors from propagating during package import.
+  Submodules should be imported explicitly where needed, e.g.:
+    from lib.async_shard import AsyncShardCoordinator
 """
 
-from .prune import (
-    prune_wanda,
-    prune_magnitude,
-    check_sparsity,
-    find_layers,
-)
-
-from .data import get_loaders
-
-__all__ = [
-    "prune_wanda",
-    "prune_magnitude",
-    "check_sparsity",
-    "find_layers",
-    "get_loaders",
-]
+__all__: list[str] = []
