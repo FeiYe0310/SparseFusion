@@ -21,7 +21,7 @@ import torch
 import numpy as np
 from transformers import AutoTokenizer
 from datasets import load_from_disk
-from typing import Callable
+from typing import Callable, Optional
 import os
 import math
 import sys
@@ -69,6 +69,7 @@ from helper_fn import (
     jax_flattened_to_pytorch_model,
 )
 from config import GSM8K_DIR, RESULTS_DIR
+from lib.async_shard import AsyncShardCoordinator
 
 
 def _init_distributed_if_needed() -> tuple[int, int]:
@@ -760,6 +761,8 @@ def run_natural_niches_sparsity_aware(
     bfcl_data_path: str = "bfcl/data/bfcl_test_200.json",  # BFCL数据路径
     gsm8k_weight: float = 0.5,  # GSM8K任务权重
     bfcl_weight: float = 0.5,  # BFCL任务权重
+    async_num_nodes: Optional[int] = None,
+    async_sync_interval: int = 10,
 ) -> list:
     """
     Run Natural Niches with Sparsity-Aware Selection and Wanda Pruning
@@ -835,6 +838,19 @@ def run_natural_niches_sparsity_aware(
         model_skeleton.generation_config.top_k = None
 
     num_params_llm = model_1.shape[0]
+
+    if async_num_nodes is None:
+        async_num_nodes = world_size if distributed else 1
+    async_num_nodes = max(async_num_nodes, 1)
+    async_enabled = async_num_nodes > 1
+    async_coordinator: Optional[AsyncShardCoordinator] = None
+    if async_enabled and is_main_process:
+        async_coordinator = AsyncShardCoordinator(
+            num_params=num_params_llm,
+            num_nodes=async_num_nodes,
+            sync_interval=async_sync_interval,
+        )
+        async_coordinator.bootstrap(model_1)
 
     if is_main_process:
         print("Loading and preprocessing GSM8K dataset from local directory...")
@@ -1083,11 +1099,18 @@ def run_natural_niches_sparsity_aware(
                 scores = jnp.zeros(scores_shape, dtype=jnp.float32)
 
             # Evaluate initial models to populate the archive
-            for model in (model_1, model_2):
+            for seed_idx, model in enumerate((model_1, model_2)):
                 score = train_eval_fn(model)
                 archive, scores = update_archive_fn(
                     score, model, archive, scores, alpha, omega, beta, tau, num_tasks, epsilon
                 )
+                if async_coordinator is not None:
+                    owner_idx = seed_idx % async_coordinator.num_nodes
+                    async_coordinator.commit(model, owner_idx)
+                    if async_coordinator.synced():
+                        archive = _apply_async_sync_to_matrix(
+                            archive, async_coordinator
+                        )
         else:
             archive = None
             scores = None
@@ -1115,6 +1138,9 @@ def run_natural_niches_sparsity_aware(
             
             for i in progress_bar:
                 k1, k2, k3, key = jax.random.split(key, 4)
+                shard_owner = None
+                if async_coordinator is not None:
+                    shard_owner = i % async_coordinator.num_nodes
 
                 # --- Child Generation (Main Process Only) ---
                 if is_main_process:
@@ -1174,6 +1200,10 @@ def run_natural_niches_sparsity_aware(
                     # 4. Mutation
                     child_f32 = mutate(child_f32, k3)
                     child_bf16_main = child_f32.astype(jnp.bfloat16)
+                    if async_coordinator is not None and shard_owner is not None:
+                        child_bf16_main = async_coordinator.prepare_candidate(
+                            child_bf16_main, shard_owner
+                        )
                     
                     # Log sparsity if requested
                     if log_sparsity_stats and (i + 1) % 10 == 0:
@@ -1208,6 +1238,12 @@ def run_natural_niches_sparsity_aware(
                     archive, scores = update_archive_fn(
                         score, child_bf16, archive, scores, alpha, omega, beta, tau, num_tasks, epsilon
                     )
+                    if async_coordinator is not None and shard_owner is not None:
+                        async_coordinator.commit(child_bf16, shard_owner)
+                        if async_coordinator.synced():
+                            archive = _apply_async_sync_to_matrix(
+                                archive, async_coordinator
+                            )
                     
                     # Record iteration statistics (every 10 steps to reduce overhead)
                     if (i + 1) % 10 == 0 or i == 0:
@@ -1371,6 +1407,27 @@ def run_natural_niches_sparsity_aware(
                 print("✅ Model saved successfully.")
 
         return results
+
+
+
+def _apply_async_sync_to_matrix(archive: jnp.ndarray, coordinator: AsyncShardCoordinator) -> jnp.ndarray:
+    """Broadcast synchronised shard slices across the population archive."""
+    if archive is None:
+        return archive
+
+    global_params = coordinator.global_params()
+    if global_params is None:
+        return archive
+
+    dtype = archive.dtype
+    synced_nodes = coordinator.synced_nodes()
+    updated = archive
+    for idx in synced_nodes:
+        start, end = coordinator.shard_slices[idx]
+        shard_vals = jnp.asarray(global_params[start:end], dtype=dtype)
+        shard_vals = jnp.broadcast_to(shard_vals, (archive.shape[0], end - start))
+        updated = updated.at[:, start:end].set(shard_vals)
+    return updated
 
 
 def _sharded_zeros(shape: tuple[int, ...], dtype, sharding):

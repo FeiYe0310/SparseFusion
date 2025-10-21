@@ -36,6 +36,7 @@ from sharded_archive import (
     update_state as sharded_update_state,
     with_mesh,
 )
+from lib.async_shard import AsyncShardCoordinator
 
 
 def run_natural_niches_sharded(
@@ -51,6 +52,8 @@ def run_natural_niches_sharded(
     model1_path: str = "",
     model2_path: str = "",
     distributed: bool = False,
+    async_num_nodes: Optional[int] = None,
+    async_sync_interval: int = 10,
 ) -> list:
     use_matchmaker, use_crossover, use_splitpoint = (
         not no_matchmaker,
@@ -167,6 +170,19 @@ def run_natural_niches_sharded(
 
     if dist_enabled and dist.is_initialized():
         dist.barrier()
+
+    if async_num_nodes is None:
+        async_num_nodes = world_size if dist_enabled else 1
+    async_num_nodes = max(async_num_nodes, 1)
+    async_enabled = async_num_nodes > 1
+    async_coordinator: Optional[AsyncShardCoordinator] = None
+    if async_enabled and is_main_process:
+        async_coordinator = AsyncShardCoordinator(
+            num_params=num_params_llm,
+            num_nodes=async_num_nodes,
+            sync_interval=async_sync_interval,
+        )
+        async_coordinator.bootstrap(model_1)
 
     dataset = load_from_disk(GSM8K_DIR)
 
@@ -408,7 +424,7 @@ def run_natural_niches_sharded(
             )
 
             alpha_scalar = float(alpha)
-            for model in (model_1, model_2):
+            for seed_idx, model in enumerate((model_1, model_2)):
                 score_vector = train_eval_fn(model)
                 score_vector = jnp.asarray(score_vector, dtype=jnp.float32)
                 state = sharded_update_state(
@@ -417,6 +433,11 @@ def run_natural_niches_sharded(
                     model,
                     alpha_scalar,
                 )
+                if async_coordinator is not None:
+                    owner_idx = seed_idx % async_coordinator.num_nodes
+                    async_coordinator.commit(model, owner_idx)
+                    if async_coordinator.synced():
+                        _apply_async_sync_to_archive(state, async_coordinator)
         else:
             if dist_enabled and dist.is_initialized():
                 for model in (model_1, model_2):
@@ -442,6 +463,9 @@ def run_natural_niches_sharded(
             )
             for i in progress_bar:
                 k1, k2, k3, key = jax.random.split(key, 4)
+                shard_owner = None
+                if async_coordinator is not None:
+                    shard_owner = i % async_coordinator.num_nodes
 
                 if is_main_process:
                     scores_cpu = np.asarray(state.scores, dtype=np.float32)
@@ -469,6 +493,11 @@ def run_natural_niches_sharded(
                         use_crossover,
                         use_splitpoint,
                     )
+                    child_cpu = jnp.asarray(child_cpu, dtype=jnp.bfloat16)
+                    if async_coordinator is not None and shard_owner is not None:
+                        child_cpu = async_coordinator.prepare_candidate(
+                            child_cpu, shard_owner
+                        )
                     child_bf16_main = jax.device_put(child_cpu)
                 else:
                     child_bf16_main = None
@@ -499,13 +528,17 @@ def run_natural_niches_sharded(
                 if is_main_process:
                     score_array = jnp.asarray(score, dtype=jnp.float32)
                     score_cpu = jax.device_put(score_array, cpu_device)
-                    child_cpu = jax.device_put(child_bf16_main, cpu_device)
+                    child_cpu_host = jax.device_put(child_bf16_main, cpu_device)
                     state = sharded_update_state(
                         state,
                         score_cpu,
-                        child_cpu,
+                        child_cpu_host,
                         alpha_scalar,
                     )
+                    if async_coordinator is not None and shard_owner is not None:
+                        async_coordinator.commit(child_cpu_host, shard_owner)
+                        if async_coordinator.synced():
+                            _apply_async_sync_to_archive(state, async_coordinator)
 
                 if dist_enabled and dist.is_initialized():
                     dist.barrier()
@@ -567,6 +600,30 @@ def run_natural_niches_sharded(
             print("✅ Model saved successfully.")
 
     return results
+
+
+def _apply_async_sync_to_archive(
+    state: ShardedArchiveState, coordinator: AsyncShardCoordinator
+) -> None:
+    """Overlay synchronised shard slices onto the archive buffer."""
+    if state.archive is None:
+        return
+
+    global_params = coordinator.global_params()
+    if global_params is None:
+        return
+
+    archive = state.archive
+    dtype = archive.dtype
+    synced_nodes = coordinator.synced_nodes()
+
+    for idx in synced_nodes:
+        start, end = coordinator.shard_slices[idx]
+        shard_vals = jnp.asarray(global_params[start:end], dtype=dtype)
+        shard_vals = jnp.broadcast_to(shard_vals, (archive.shape[0], end - start))
+        archive = archive.at[:, start:end].set(shard_vals)
+
+    state.archive = archive
 
 
 __all__ = ["run_natural_niches_sharded"]
