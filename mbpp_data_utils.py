@@ -9,7 +9,7 @@ import json
 import torch
 from typing import Dict, List, Any
 from torch.utils.data import Dataset
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 
 
 class MBPPDataset(Dataset):
@@ -30,13 +30,22 @@ class MBPPDataset(Dataset):
     def _load_data(self, data_path: str, split: str) -> List[Dict]:
         """从HuggingFace datasets或本地文件加载MBPP数据"""
         if os.path.exists(data_path):
-            # 从本地文件加载
-            print(f"Loading MBPP data from local path: {data_path}")
-            with open(data_path, 'r', encoding='utf-8') as f:
-                if data_path.endswith('.jsonl'):
-                    data = [json.loads(line) for line in f if line.strip()]
-                else:
-                    data = json.load(f)
+            # 本地路径：区分目录(HF保存的dataset)与文件(JSON/JSONL)
+            if os.path.isdir(data_path):
+                print(f"Loading MBPP data from local HF dataset dir: {data_path}")
+                ds = load_from_disk(data_path)
+                # 选择split
+                chosen_split = split if split in ds else (
+                    'test' if 'test' in ds else ('validation' if 'validation' in ds else 'train')
+                )
+                data = list(ds[chosen_split])
+            else:
+                print(f"Loading MBPP data from local file: {data_path}")
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    if data_path.endswith('.jsonl'):
+                        data = [json.loads(line) for line in f if line.strip()]
+                    else:
+                        data = json.load(f)
         else:
             # 从HuggingFace datasets加载
             print(f"Loading MBPP data from HuggingFace Hub: '{data_path}' (split: {split})")
