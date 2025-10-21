@@ -32,57 +32,43 @@ def generate_mult_dataset(num_samples: int, digits: int = 4, seed: int = 42) -> 
     return data
 
 
-def _rand_bool_expr(rng: random.Random, vars_vals: Dict[str, bool], max_depth: int = 2) -> str:
-    # 简单递归生成：原子(Var 或 not Var) 或 二元 (expr op expr)
-    if max_depth <= 0:
+def _rand_bool_expr_with_val(
+    rng: random.Random, vars_vals: Dict[str, bool], max_depth: int = 2
+) -> tuple[str, bool]:
+    """
+    递归同时生成布尔表达式字符串与其真值，避免运行时 eval。
+    支持一元 not 与二元 and/or/xor。
+    """
+    # 原子
+    if max_depth <= 0 or rng.random() < 0.4:
         var = rng.choice(list(vars_vals.keys()))
-        if rng.random() < 0.3:
-            return f"not {var}"
-        return var
-    # 二元或一元
-    if rng.random() < 0.4:
-        var = rng.choice(list(vars_vals.keys()))
+        # 可选一元 not
         if rng.random() < 0.5:
-            return f"not {var}"
-        return var
-    left = _rand_bool_expr(rng, vars_vals, max_depth - 1)
-    right = _rand_bool_expr(rng, vars_vals, max_depth - 1)
+            return (f"not {var}", (not vars_vals[var]))
+        return (var, vars_vals[var])
+
+    # 二元组合
+    left_expr, left_val = _rand_bool_expr_with_val(rng, vars_vals, max_depth - 1)
+    right_expr, right_val = _rand_bool_expr_with_val(rng, vars_vals, max_depth - 1)
     op = rng.choice(["and", "or", "xor"])  # 支持xor
-    return f"({left} {op} {right})"
+    if op == "and":
+        return (f"({left_expr} and {right_expr})", (left_val and right_val))
+    if op == "or":
+        return (f"({left_expr} or {right_expr})", (left_val or right_val))
+    # xor
+    return (f"({left_expr} xor {right_expr})", (left_val != right_val))
 
 
 def generate_bool_dataset(num_samples: int, seed: int = 42) -> List[Dict]:
     rng = random.Random(seed)
     data: List[Dict] = []
     for _ in range(num_samples):
-        vals = {"A": bool(rng.getrandbits(1)), "B": bool(rng.getrandbits(1)), "C": bool(rng.getrandbits(1))}
-        expr = _rand_bool_expr(rng, vals, max_depth=2)
-        # 计算gold
-        def _val(name: str) -> bool:
-            return vals[name]
-        # 安全求值：仅允许 and/or/not/xor/A/B/C/括号/空格
-        safe_expr = expr.replace("xor", "^")
-        local = {
-            "A": vals["A"],
-            "B": vals["B"],
-            "C": vals["C"],
-            "and": lambda x, y: x and y,  # 未被eval直接调用，这里只是占位
-            "or": lambda x, y: x or y,
-            "not": lambda x: (not x),
+        vals = {
+            "A": bool(rng.getrandbits(1)),
+            "B": bool(rng.getrandbits(1)),
+            "C": bool(rng.getrandbits(1)),
         }
-        # 将 ^ 作为异或：转为Python按位异或，再映射到bool
-        # 我们用替换方案：A ^ B -> (A) ^ (B)
-        # 最终用 eval 仅在包含 A/B/C/()/^/not/and/or 的上下文中。
-        expr_eval = safe_expr
-        # 评估：将 A/B/C 替换为 True/False 字面值
-        expr_eval = (expr_eval
-                     .replace("A", str(vals["A"]))
-                     .replace("B", str(vals["B"]))
-                     .replace("C", str(vals["C"]))
-                     )
-        # 将 xor(^) 映射为不等：x ^ y 等价于 (x != y)
-        expr_eval = re.sub(r"\^", " != ", expr_eval)
-        gold = bool(eval(expr_eval))  # 安全前提：受控生成
+        expr, gold = _rand_bool_expr_with_val(rng, vals, max_depth=2)
         prompt = (
             f"Given A={vals['A']}, B={vals['B']}, C={vals['C']}, evaluate: {expr}. "
             f"Answer 'True' or 'False' only."
