@@ -1,0 +1,63 @@
+[
+  {
+    "task_id": 1,
+    "text": "编写一个函数，检查给定的数字是否是偶数。",
+    "code": "def is_even(n):\n    return n % 2 == 0",
+    "test_list": [
+      "assert is_even(2) == True",
+      "assert is_even(3) == False",
+      "assert is_even(0) == True"
+    ],
+    "test_setup_code": "",
+    "challenge_test_list": []
+  },
+  {
+    "task_id": 2,
+    "text": "编写一个函数，返回列表中的最大值。",
+    "code": "def find_max(numbers):\n    return max(numbers)",
+    "test_list": [
+      "assert find_max([1, 2, 3, 4, 5]) == 5",
+      "assert find_max([10, 20, 5]) == 20",
+      "assert find_max([-1, -5, -3]) == -1"
+    ],
+    "test_setup_code": "",
+    "challenge_test_list": []
+  },
+  {
+    "task_id": 3,
+    "text": "编写一个函数，计算两个数的和。",
+    "code": "def add(a, b):\n    return a + b",
+    "test_list": [
+      "assert add(2, 3) == 5",
+      "assert add(-1, 1) == 0",
+      "assert add(0, 0) == 0"
+    ],
+    "test_setup_code": "",
+    "challenge_test_list": []
+  },
+  {
+    "task_id": 4,
+    "text": "编写一个函数，反转字符串。",
+    "code": "def reverse_string(s):\n    return s[::-1]",
+    "test_list": [
+      "assert reverse_string('hello') == 'olleh'",
+      "assert reverse_string('python') == 'nohtyp'",
+      "assert reverse_string('') == ''"
+    ],
+    "test_setup_code": "",
+    "challenge_test_list": []
+  },
+  {
+    "task_id": 5,
+    "text": "编写一个函数，计算列表中所有数字的和。",
+    "code": "def sum_list(numbers):\n    return sum(numbers)",
+    "test_list": [
+      "assert sum_list([1, 2, 3, 4, 5]) == 15",
+      "assert sum_list([10, 20, 30]) == 60",
+      "assert sum_list([]) == 0"
+    ],
+    "test_setup_code": "",
+    "challenge_test_list": []
+  }
+]
+
