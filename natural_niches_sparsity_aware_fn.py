@@ -1169,23 +1169,22 @@ def run_natural_niches_sparsity_aware(
         )
 
         # Update num_tasks for competitive normalization
-        # Multi-task: eval_subset_size * num_active_tasks
+        # Multi-task: sum of actual samples per task (considering eval_subset_size and dataset size)
         # 只计算权重>0的任务
-        num_active_tasks = 0
-        if task_weights_dict.get('gsm8k', 0.0) > 0:
-            num_active_tasks += 1
-        if use_bfcl_eval and bfcl_dataset is not None and task_weights_dict.get('bfcl', 0.0) > 0:
-            num_active_tasks += 1
-        if use_mbpp_eval and mbpp_dataset is not None and task_weights_dict.get('mbpp', 0.0) > 0:
-            num_active_tasks += 1
-        if use_mult4_eval and task_weights_dict.get('mult4', 0.0) > 0:
-            num_active_tasks += 1
-        if use_mult5_eval and task_weights_dict.get('mult5', 0.0) > 0:
-            num_active_tasks += 1
-        if use_bool_eval and task_weights_dict.get('bool', 0.0) > 0:
-            num_active_tasks += 1
         if eval_subset_size is not None:
-            num_tasks = eval_subset_size * num_active_tasks
+            num_tasks = 0
+            if task_weights_dict.get('gsm8k', 0.0) > 0:
+                num_tasks += min(eval_subset_size, len(tokenized_train_dataset))
+            if use_bfcl_eval and bfcl_dataset is not None and task_weights_dict.get('bfcl', 0.0) > 0:
+                num_tasks += min(eval_subset_size, len(bfcl_dataset))
+            if use_mbpp_eval and mbpp_dataset is not None and task_weights_dict.get('mbpp', 0.0) > 0:
+                num_tasks += min(eval_subset_size, len(mbpp_dataset))
+            if use_mult4_eval and task_weights_dict.get('mult4', 0.0) > 0:
+                num_tasks += eval_subset_size  # DoT任务在线生成，总是eval_subset_size
+            if use_mult5_eval and task_weights_dict.get('mult5', 0.0) > 0:
+                num_tasks += eval_subset_size
+            if use_bool_eval and task_weights_dict.get('bool', 0.0) > 0:
+                num_tasks += eval_subset_size
         else:
             # 只计算权重>0的任务的样本数
             num_tasks = 0
