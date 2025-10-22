@@ -41,34 +41,44 @@ PIPSIZE=20 bash scripts/experiments/small_batch_pipsize12.sh
 
 ## 🎯 任务配置
 
-默认启用的任务和权重：
+默认启用的任务和权重（**不使用GSM8K**）：
 
-- **GSM8K**: 0.50 (数学推理)
+- **GSM8K**: 0.00 (不使用)
 - **BFCL**: 0.00 (函数调用，已启用但权重为0)
-- **MBPP**: 0.50 (代码生成)
-- **Mult4**: 0.25 (4位乘法)
+- **MBPP**: 0.50 (代码生成) ⭐
+- **Mult4**: 0.25 (4位乘法) ⭐
 - **Mult5**: 0.00 (5位乘法，已启用但权重为0)
-- **Boolean**: 0.25 (布尔逻辑)
+- **Boolean**: 0.25 (布尔逻辑) ⭐
+
+主要关注任务：**MBPP (50%) + Mult4 (25%) + Boolean (25%)**
 
 ## 🔧 自定义任务权重
 
 ```bash
-# 只测试GSM8K和MBPP
-GSM8K_WEIGHT=0.7 \
-MBPP_WEIGHT=0.3 \
+# 只测试MBPP
+MBPP_WEIGHT=1.0 \
 MULT4_WEIGHT=0.0 \
 BOOL_WEIGHT=0.0 \
 bash scripts/experiments/small_batch_pipsize12.sh
 
-# 启用BFCL和Mult5
-BFCL_WEIGHT=0.3 \
-MULT5_WEIGHT=0.2 \
+# 平均分配所有任务 (包括BFCL和Mult5)
+MBPP_WEIGHT=0.25 \
+MULT4_WEIGHT=0.25 \
+MULT5_WEIGHT=0.25 \
+BOOL_WEIGHT=0.25 \
+bash scripts/experiments/small_batch_pipsize12.sh
+
+# 启用GSM8K (如果需要)
+GSM8K_WEIGHT=0.4 \
+MBPP_WEIGHT=0.3 \
+MULT4_WEIGHT=0.2 \
+BOOL_WEIGHT=0.1 \
 bash scripts/experiments/small_batch_pipsize12.sh
 ```
 
 ## 📊 性能分析
 
-运行后会自动显示每个任务的性能统计：
+运行后会自动显示每个任务的性能统计（示例输出）：
 
 ```
 ======================================================================
@@ -76,12 +86,13 @@ bash scripts/experiments/small_batch_pipsize12.sh
 ======================================================================
 任务                 耗时(s)         平均得分          得分/秒
 ----------------------------------------------------------------------
-GSM8K                  45.23          0.6500        0.014371
 MBPP                   38.67          0.5200        0.013447
 Mult4                  12.34          0.8100        0.065640
 Boolean                 8.91          0.7300        0.081930
 ======================================================================
 ```
+
+**注意**: 不使用GSM8K任务，因此统计中不会显示GSM8K的性能数据。
 
 ## 📁 输出文件
 
@@ -150,9 +161,8 @@ bash scripts/experiments/small_batch_pipsize12.sh
 
 **Q: 如何只测试特定任务？**
 ```bash
-# 只测试GSM8K
-GSM8K_WEIGHT=1.0 \
-MBPP_WEIGHT=0.0 \
+# 只测试MBPP
+MBPP_WEIGHT=1.0 \
 MULT4_WEIGHT=0.0 \
 BOOL_WEIGHT=0.0 \
 bash scripts/experiments/small_batch_pipsize12.sh

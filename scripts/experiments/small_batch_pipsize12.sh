@@ -60,9 +60,9 @@ PRUNING_SPARSITY="${PRUNING_SPARSITY:-0.0}"  # 不启用pruning
 EVAL_SUBSET_SIZE="${EVAL_SUBSET_SIZE:-12}"   # 每个任务12个样本
 PIPSIZE="${PIPSIZE:-12}"
 
-# Multi-task weights
+# Multi-task weights (不使用GSM8K)
 USE_MULTI_TASK="${USE_MULTI_TASK:-true}"
-GSM8K_WEIGHT="${GSM8K_WEIGHT:-0.50}"
+GSM8K_WEIGHT="${GSM8K_WEIGHT:-0.00}"  # 不使用GSM8K
 
 USE_BFCL_EVAL="${USE_BFCL_EVAL:-true}"
 BFCL_WEIGHT="${BFCL_WEIGHT:-0.00}"
@@ -173,13 +173,11 @@ echo "评估样本数/任务: ${EVAL_SUBSET_SIZE}"
 echo "GPUs: ${GPUS_PER_NODE}"
 echo "输出目录: ${OUTPUT_DIR}"
 echo "================================================"
-echo "任务权重:"
-echo "  GSM8K: ${GSM8K_WEIGHT}"
-echo "  BFCL: ${BFCL_WEIGHT}"
+echo "任务权重 (不使用GSM8K):"
 echo "  MBPP: ${MBPP_WEIGHT}"
 echo "  Mult4: ${MULT4_WEIGHT}"
-echo "  Mult5: ${MULT5_WEIGHT}"
 echo "  Boolean: ${BOOL_WEIGHT}"
+echo "  (BFCL: ${BFCL_WEIGHT}, Mult5: ${MULT5_WEIGHT} - 已启用但权重为0)"
 echo "================================================"
 
 # Main execution logic
