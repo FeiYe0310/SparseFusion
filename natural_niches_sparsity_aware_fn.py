@@ -2062,7 +2062,7 @@ def create_mbpp_evaluation_fn(
                 )
                 
                 # 执行测试评估每个样本
-                for gen_code, tests, setup in zip(generated_codes, test_lists, setup_codes):
+                for sample_idx, (gen_code, tests, setup) in enumerate(zip(generated_codes, test_lists, setup_codes)):
                     try:
                         # 清理生成的代码（移除markdown代码块标记等）
                         clean_code = gen_code.strip()
@@ -2076,8 +2076,17 @@ def create_mbpp_evaluation_fn(
                         # 执行测试
                         is_correct = safe_execute_code(clean_code, tests, setup)
                         all_scores.append(1.0 if is_correct else 0.0)
-                    except Exception:
+                        
+                        # 调试：打印前2个样本的输出
+                        if rank == 0 and len(all_scores) <= 2:
+                            print(f"  [MBPP] Sample {len(all_scores)}:")
+                            print(f"    Generated: {gen_code[:150]}...")
+                            print(f"    Tests: {tests[:3]}")
+                            print(f"    Correct: {is_correct}")
+                    except Exception as e:
                         all_scores.append(0.0)  # 任何异常都视为失败
+                        if rank == 0 and len(all_scores) <= 2:
+                            print(f"  [MBPP] Sample {len(all_scores)}: Exception - {str(e)[:100]}")
         
         # 分布式聚合（与GSM8K/BFCL评估函数保持一致）
         if distributed and world_size > 1 and not return_subset_only:
@@ -2332,13 +2341,17 @@ def create_dot_eval_fn(
                     skip_special_tokens=True
                 )
 
-            for txt, gold in zip(gen_txts, batch_golds):
-                if task in ('mult4', 'mult5'):
-                    pred = parse_fn(txt)
-                    all_scores.append(1.0 if (pred is not None and pred == gold) else 0.0)
-                else:
-                    pred = parse_fn(txt)
-                    all_scores.append(1.0 if (pred is not None and pred == gold) else 0.0)
+            for i, (txt, gold) in enumerate(zip(gen_txts, batch_golds)):
+                pred = parse_fn(txt)
+                is_correct = (pred is not None and pred == gold)
+                all_scores.append(1.0 if is_correct else 0.0)
+                
+                # 调试：打印前3个样本的输出
+                if rank == 0 and start == 0 and i < 3:
+                    print(f"  [{task.upper()}] Sample {i+1}:")
+                    print(f"    Prompt: {batch_prompts[i][:80]}...")
+                    print(f"    Gold: {gold}, Pred: {pred}, Output: {txt[:100]}")
+                    print(f"    Correct: {is_correct}")
 
         return jnp.array(all_scores, dtype=jnp.float32)
 
