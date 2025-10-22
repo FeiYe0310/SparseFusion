@@ -1170,32 +1170,38 @@ def run_natural_niches_sparsity_aware(
 
         # Update num_tasks for competitive normalization
         # Multi-task: eval_subset_size * num_active_tasks
-        num_active_tasks = 1  # GSM8K
-        if use_bfcl_eval and bfcl_dataset is not None:
+        # 只计算权重>0的任务
+        num_active_tasks = 0
+        if task_weights_dict.get('gsm8k', 0.0) > 0:
             num_active_tasks += 1
-        if use_mbpp_eval and mbpp_dataset is not None:
+        if use_bfcl_eval and bfcl_dataset is not None and task_weights_dict.get('bfcl', 0.0) > 0:
             num_active_tasks += 1
-        if use_mult4_eval:
+        if use_mbpp_eval and mbpp_dataset is not None and task_weights_dict.get('mbpp', 0.0) > 0:
             num_active_tasks += 1
-        if use_mult5_eval:
+        if use_mult4_eval and task_weights_dict.get('mult4', 0.0) > 0:
             num_active_tasks += 1
-        if use_bool_eval:
+        if use_mult5_eval and task_weights_dict.get('mult5', 0.0) > 0:
+            num_active_tasks += 1
+        if use_bool_eval and task_weights_dict.get('bool', 0.0) > 0:
             num_active_tasks += 1
         if eval_subset_size is not None:
             num_tasks = eval_subset_size * num_active_tasks
         else:
-            num_tasks = len(tokenized_train_dataset)
-            if use_bfcl_eval and bfcl_dataset is not None:
+            # 只计算权重>0的任务的样本数
+            num_tasks = 0
+            if task_weights_dict.get('gsm8k', 0.0) > 0:
+                num_tasks += len(tokenized_train_dataset)
+            if use_bfcl_eval and bfcl_dataset is not None and task_weights_dict.get('bfcl', 0.0) > 0:
                 num_tasks += len(bfcl_dataset)
-            if use_mbpp_eval and mbpp_dataset is not None:
+            if use_mbpp_eval and mbpp_dataset is not None and task_weights_dict.get('mbpp', 0.0) > 0:
                 num_tasks += len(mbpp_dataset)
             # DoT在线任务：若未采样子集，按评估默认数量（与eval_subset_size等同或20）
             default_dot = 20
-            if use_mult4_eval:
+            if use_mult4_eval and task_weights_dict.get('mult4', 0.0) > 0:
                 num_tasks += default_dot
-            if use_mult5_eval:
+            if use_mult5_eval and task_weights_dict.get('mult5', 0.0) > 0:
                 num_tasks += default_dot
-            if use_bool_eval:
+            if use_bool_eval and task_weights_dict.get('bool', 0.0) > 0:
                 num_tasks += default_dot
     else:
         # Single-task evaluation: GSM8K only
