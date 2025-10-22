@@ -51,8 +51,8 @@ ARCHIVE_BACKEND="${ARCHIVE_BACKEND:-gpu}"
 # Experiment Parameters - 只改这里的参数
 # ============================================================================
 MAIN_ARGS=(
-  --model1_path "Qwen/Qwen2.5-0.5B-Instruct"
-  --model2_path "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+  --model1_path "models/Qwen2.5-0.5B-Instruct"
+  --model2_path "models/Qwen2.5-Coder-0.5B-Instruct"
   --pop_size 8
   --total_forward_passes 240
   --runs 1
