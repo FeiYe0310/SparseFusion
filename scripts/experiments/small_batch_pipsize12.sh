@@ -79,8 +79,8 @@ MBPP_DATA_PATH="${MBPP_DATA_PATH:-datasets/mbpp/mbpp_test.jsonl}"
 BFCL_DATA_PATH="${BFCL_DATA_PATH:-bfcl/data/bfcl_test_200.json}"
 
 # Model paths
-MODEL1_PATH="${MODEL1_PATH:-meta-llama/Llama-3.2-1B-Instruct}"
-MODEL2_PATH="${MODEL2_PATH:-meta-llama/Llama-3.2-1B-Instruct}"
+MODEL1_PATH="${MODEL1_PATH:-Qwen/Qwen2.5-0.5B-Instruct}"
+MODEL2_PATH="${MODEL2_PATH:-Qwen/Qwen2.5-0.5B-Instruct}"
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -91,7 +91,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-results/small_batch_pipsize12_${TIMESTAMP}}"
 # ============================================================================
 echo "🚀 开始小批次运行测试 (PIPSize=12)"
 echo "================================================"
-echo "模型: meta-llama/Llama-3.2-1B-Instruct"
+echo "模型: Qwen/Qwen2.5-0.5B-Instruct"
 echo "Population: $POP_SIZE"
 echo "Iterations: $NUM_ITERATIONS"
 echo "PIPSize: $EVAL_SUBSET_SIZE"
