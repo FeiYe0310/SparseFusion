@@ -2199,45 +2199,46 @@ def create_multi_task_evaluation_fn(
         task_times = {}
         task_scores = {}
         
-        # GSM8K
-        start_time = time.time()
-        gsm8k_scores = gsm8k_eval_fn(flat_params)
-        task_times['GSM8K'] = time.time() - start_time
-        task_scores['GSM8K'] = float(jnp.mean(gsm8k_scores))
-        scores_list.append(gsm8k_scores)
+        # GSM8K (跳过权重为0的任务)
+        if task_weights.get('gsm8k', 0.0) > 0:
+            start_time = time.time()
+            gsm8k_scores = gsm8k_eval_fn(flat_params)
+            task_times['GSM8K'] = time.time() - start_time
+            task_scores['GSM8K'] = float(jnp.mean(gsm8k_scores))
+            scores_list.append(gsm8k_scores)
         
-        # BFCL（可选）
-        if bfcl_eval_fn is not None:
+        # BFCL（可选，跳过权重为0的任务）
+        if bfcl_eval_fn is not None and task_weights.get('bfcl', 0.0) > 0:
             start_time = time.time()
             bfcl_scores = bfcl_eval_fn(flat_params)
             task_times['BFCL'] = time.time() - start_time
             task_scores['BFCL'] = float(jnp.mean(bfcl_scores))
             scores_list.append(bfcl_scores)
         
-        # MBPP（可选）
-        if mbpp_eval_fn is not None:
+        # MBPP（可选，跳过权重为0的任务）
+        if mbpp_eval_fn is not None and task_weights.get('mbpp', 0.0) > 0:
             start_time = time.time()
             mbpp_scores = mbpp_eval_fn(flat_params)
             task_times['MBPP'] = time.time() - start_time
             task_scores['MBPP'] = float(jnp.mean(mbpp_scores))
             scores_list.append(mbpp_scores)
         
-        # DoT（可选）
-        if mult4_eval_fn is not None:
+        # DoT（可选，跳过权重为0的任务）
+        if mult4_eval_fn is not None and task_weights.get('mult4', 0.0) > 0:
             start_time = time.time()
             mult4_scores = mult4_eval_fn(flat_params)
             task_times['Mult4'] = time.time() - start_time
             task_scores['Mult4'] = float(jnp.mean(mult4_scores))
             scores_list.append(mult4_scores)
         
-        if mult5_eval_fn is not None:
+        if mult5_eval_fn is not None and task_weights.get('mult5', 0.0) > 0:
             start_time = time.time()
             mult5_scores = mult5_eval_fn(flat_params)
             task_times['Mult5'] = time.time() - start_time
             task_scores['Mult5'] = float(jnp.mean(mult5_scores))
             scores_list.append(mult5_scores)
         
-        if bool_eval_fn is not None:
+        if bool_eval_fn is not None and task_weights.get('bool', 0.0) > 0:
             start_time = time.time()
             bool_scores = bool_eval_fn(flat_params)
             task_times['Boolean'] = time.time() - start_time
