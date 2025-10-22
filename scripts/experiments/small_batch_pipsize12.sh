@@ -79,8 +79,8 @@ MBPP_DATA_PATH="${MBPP_DATA_PATH:-datasets/mbpp/mbpp_test.jsonl}"
 BFCL_DATA_PATH="${BFCL_DATA_PATH:-bfcl/data/bfcl_test_200.json}"
 
 # Model paths
-MODEL1_PATH="${MODEL1_PATH:-models/meta-llama/Llama-3.2-1B-Instruct}"
-MODEL2_PATH="${MODEL2_PATH:-models/meta-llama/Llama-3.2-1B-Instruct}"
+MODEL1_PATH="${MODEL1_PATH:-meta-llama/Llama-3.2-1B-Instruct}"
+MODEL2_PATH="${MODEL2_PATH:-meta-llama/Llama-3.2-1B-Instruct}"
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
