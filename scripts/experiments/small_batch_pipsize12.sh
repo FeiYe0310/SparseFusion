@@ -78,9 +78,9 @@ BOOL_WEIGHT="${BOOL_WEIGHT:-0.30}"
 MBPP_DATA_PATH="${MBPP_DATA_PATH:-datasets/mbpp/mbpp_test.jsonl}"
 BFCL_DATA_PATH="${BFCL_DATA_PATH:-bfcl/data/bfcl_test_200.json}"
 
-# Model paths
-MODEL1_PATH="${MODEL1_PATH:-Qwen/Qwen2.5-0.5B-Instruct}"
-MODEL2_PATH="${MODEL2_PATH:-Qwen/Qwen2.5-Coder-0.5B-Instruct}"
+# Model paths (hardcoded to avoid any environment variable issues)
+MODEL1_PATH="Qwen/Qwen2.5-0.5B-Instruct"
+MODEL2_PATH="Qwen/Qwen2.5-Coder-0.5B-Instruct"
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
