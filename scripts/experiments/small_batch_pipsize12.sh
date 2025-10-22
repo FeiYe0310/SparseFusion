@@ -64,7 +64,7 @@ MAIN_ARGS=(
   --log_sparsity_stats
   --gsm8k_weight 0.00
   --use_mbpp_eval
-  --mbpp_data_path "datasets/mbpp/mbpp_test.jsonl"
+  --mbpp_data_path "mbpp/data/mbpp_test_sample.json"
   --mbpp_weight 0.40
   --use_mult4_eval
   --mult4_weight 0.30
