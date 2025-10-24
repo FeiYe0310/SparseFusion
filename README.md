@@ -244,6 +244,12 @@ python main_sparsity_aware.py --debug_models --pop_size 16 --total_forward_passe
 
 ---
 
+## 🐛 Test
+
+```bash
+PYTHONPATH="$PWD" pytest tests/test_helper_fn.py
+```
+
 ## 🐛 Troubleshooting
 
 ### ImportError: No module named 'lib'

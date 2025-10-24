@@ -29,10 +29,10 @@ def test_merged_tokenizer_alignment_with_mathbert_and_bertoverflow() -> None:
         pytest.skip("Torch >= 2.6.0 required to load these checkpoints safely.")
 
     try:
-        model1 = AutoModel.from_pretrained("tbs17/MathBERT").eval()
-        tokenizer1 = AutoTokenizer.from_pretrained("tbs17/MathBERT")
-        model2 = AutoModel.from_pretrained("jeniya/BERTOverflow").eval()
-        tokenizer2 = AutoTokenizer.from_pretrained("jeniya/BERTOverflow")
+        model1 = AutoModel.from_pretrained("models/MathBERT").eval()
+        tokenizer1 = AutoTokenizer.from_pretrained("models/MathBERT")
+        model2 = AutoModel.from_pretrained("models/BERTOverflow").eval()
+        tokenizer2 = AutoTokenizer.from_pretrained("models/BERTOverflow")
     except OSError as exc:
         pytest.skip(f"Required models not available locally: {exc}")
 
@@ -84,15 +84,60 @@ def test_merged_tokenizer_alignment_with_mathbert_and_bertoverflow() -> None:
 
 
 @pytest.mark.skipif(AutoModel is None, reason="transformers is required for this test")
+def test_merge_tokenizers_is_noop_for_identical_qwen_vocab() -> None:
+    if _version_tuple(torch.__version__) < (2, 6, 0):
+        pytest.skip("Torch >= 2.6.0 required to load these checkpoints safely.")
+
+    try:
+        model1 = AutoModel.from_pretrained("models/Qwen2.5-Coder-0.5B-Instruct").eval()
+        tokenizer1 = AutoTokenizer.from_pretrained("models/Qwen2.5-Coder-0.5B-Instruct")
+        model2 = AutoModel.from_pretrained("models/Qwen2.5-0.5B-Instruct").eval()
+        tokenizer2 = AutoTokenizer.from_pretrained("models/Qwen2.5-0.5B-Instruct")
+    except OSError as exc:
+        pytest.skip(f"Required models not available locally: {exc}")
+
+    vocab1 = tokenizer1.get_vocab()
+    vocab2 = tokenizer2.get_vocab()
+    assert vocab1 == vocab2
+
+    original_embedding1 = model1.get_input_embeddings().weight.detach().clone()
+    original_embedding2 = model2.get_input_embeddings().weight.detach().clone()
+
+    merged_tokenizer, aligned_model1, aligned_model2 = merge_tokenizers_and_align_models(
+        model1, tokenizer1, model2, tokenizer2
+    )
+
+    assert merged_tokenizer is tokenizer1
+    assert aligned_model1 is model1
+    assert aligned_model2 is model2
+
+    assert merged_tokenizer.get_vocab() == vocab1
+    assert tokenizer2.get_vocab() == vocab2
+
+    torch.testing.assert_close(
+        aligned_model1.get_input_embeddings().weight.detach(),
+        original_embedding1,
+        rtol=0,
+        atol=0,
+    )
+    torch.testing.assert_close(
+        aligned_model2.get_input_embeddings().weight.detach(),
+        original_embedding2,
+        rtol=0,
+        atol=0,
+    )
+
+
+@pytest.mark.skipif(AutoModel is None, reason="transformers is required for this test")
 def test_model_outputs_preserved_after_embedding_alignment() -> None:
     if _version_tuple(torch.__version__) < (2, 6, 0):
         pytest.skip("Torch >= 2.6.0 required to load these checkpoints safely.")
 
     try:
-        model1 = AutoModel.from_pretrained("tbs17/MathBERT").eval()
-        tokenizer1 = AutoTokenizer.from_pretrained("tbs17/MathBERT")
-        model2 = AutoModel.from_pretrained("jeniya/BERTOverflow").eval()
-        tokenizer2 = AutoTokenizer.from_pretrained("jeniya/BERTOverflow")
+        model1 = AutoModel.from_pretrained("models/MathBERT").eval()
+        tokenizer1 = AutoTokenizer.from_pretrained("models/MathBERT")
+        model2 = AutoModel.from_pretrained("models/BERTOverflow").eval()
+        tokenizer2 = AutoTokenizer.from_pretrained("models/BERTOverflow")
     except OSError as exc:
         pytest.skip(f"Required models not available locally: {exc}")
 

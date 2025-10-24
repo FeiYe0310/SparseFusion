@@ -32,3 +32,6 @@ nohup.out
 bfcl/gorilla/
 generate_bfcl_data.py
 bfcl_integration_patch.py
+
+**/*_yanjian.*
+**/*_yanjian/
