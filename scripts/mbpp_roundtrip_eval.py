@@ -5,6 +5,7 @@ import json
 import random
 import torch
 import sys
+import re
 
 # Ensure JAX runs on CPU for flatten/restore
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
@@ -65,12 +66,16 @@ def safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int
 
 def clean_code_block(text: str) -> str:
     s = text.strip()
-    if s.startswith("```python"):
-        s = s[len("```python"):].strip()
-    if s.startswith("```"):
-        s = s[3:].strip()
-    if s.endswith("```"):
-        s = s[:-3].strip()
+    # 1) Try to extract the first fenced code block
+    m = re.search(r"```python\n([\s\S]*?)\n```", s, re.IGNORECASE)
+    if not m:
+        m = re.search(r"```\n([\s\S]*?)\n```", s)
+    if m:
+        return m.group(1).strip()
+    # 2) Fallback: take from the first 'def ' to the end
+    m = re.search(r"def\s+\w+\s*\(.*", s)
+    if m:
+        return s[m.start():].strip()
     return s
 
 
@@ -97,7 +102,16 @@ def load_model_and_tokenizer(model_path: str, device: torch.device):
     return model, tok
 
 
-def evaluate_mbpp_with_model(model, tokenizer, mbpp_path: str, batch_size: int, subset: int | None, device: torch.device) -> dict:
+def evaluate_mbpp_with_model(
+    model,
+    tokenizer,
+    mbpp_path: str,
+    batch_size: int,
+    subset: int | None,
+    device: torch.device,
+    return_details: bool = False,
+    max_details: int | None = None,
+) -> dict:
     ds = MBPPDataset(mbpp_path, tokenizer)
     if subset is not None and subset < len(ds):
         random.seed(0)
@@ -138,12 +152,14 @@ def evaluate_mbpp_with_model(model, tokenizer, mbpp_path: str, batch_size: int, 
                 ok = safe_execute_code(code, tests, setup)
                 passed += 1 if ok else 0
                 total += 1
-                if len(samples) < 3:
-                    samples.append({
-                        "prompt": prompt[:200],
-                        "generated": gen[:300],
-                        "passed": ok,
-                    })
+                if return_details:
+                    if (max_details is None) or (len(samples) < max_details):
+                        samples.append({
+                            "prompt": prompt,
+                            "generated": gen,
+                            "cleaned": code,
+                            "passed": ok,
+                        })
 
     return {"passed": passed, "total": total, "acc": (passed / total if total else 0.0), "samples": samples}
 
@@ -154,6 +170,8 @@ def main():
     parser.add_argument("--mbpp_path", required=True, type=str)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--subset", type=int, default=20)
+    parser.add_argument("--print_n", type=int, default=0, help="Print first N detailed samples for baseline and roundtrip")
+    parser.add_argument("--dump_path", type=str, default=None, help="Optional path to dump all detailed results as JSON")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -163,8 +181,12 @@ def main():
 
     # 2) Baseline eval
     print("\n=== Baseline (original parameters) ===")
-    baseline = evaluate_mbpp_with_model(model_orig, tokenizer, args.mbpp_path, args.batch_size, args.subset, device)
-    print(json.dumps({k: (v if k != "samples" else v) for k, v in baseline.items()}, ensure_ascii=False, indent=2))
+    baseline = evaluate_mbpp_with_model(
+        model_orig, tokenizer, args.mbpp_path, args.batch_size, args.subset, device,
+        return_details=(args.print_n > 0 or args.dump_path is not None),
+        max_details=(args.print_n if args.print_n > 0 else None),
+    )
+    print(json.dumps({k: (v if k != "samples" else (v[:args.print_n] if args.print_n > 0 else [])) for k, v in baseline.items()}, ensure_ascii=False, indent=2))
 
     # 3) Flatten to JAX then restore into a fresh skeleton
     print("\nFlattening to JAX and restoring into a fresh skeleton...")
@@ -180,8 +202,12 @@ def main():
 
     # 4) Roundtrip eval
     print("\n=== After roundtrip (restored parameters) ===")
-    roundtrip = evaluate_mbpp_with_model(model_skel, tokenizer, args.mbpp_path, args.batch_size, args.subset, device)
-    print(json.dumps({k: (v if k != "samples" else v) for k, v in roundtrip.items()}, ensure_ascii=False, indent=2))
+    roundtrip = evaluate_mbpp_with_model(
+        model_skel, tokenizer, args.mbpp_path, args.batch_size, args.subset, device,
+        return_details=(args.print_n > 0 or args.dump_path is not None),
+        max_details=(args.print_n if args.print_n > 0 else None),
+    )
+    print(json.dumps({k: (v if k != "samples" else (v[:args.print_n] if args.print_n > 0 else [])) for k, v in roundtrip.items()}, ensure_ascii=False, indent=2))
 
     # 5) Summary
     print("\n=== Summary ===")
@@ -192,6 +218,16 @@ def main():
         "baseline_total": baseline["total"],
         "roundtrip_total": roundtrip["total"],
     }, ensure_ascii=False, indent=2))
+
+    # Optional dump
+    if args.dump_path:
+        out = {
+            "baseline": baseline,
+            "roundtrip": roundtrip,
+        }
+        with open(args.dump_path, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        print(f"\nSaved detailed results to: {args.dump_path}")
 
 
 if __name__ == "__main__":
