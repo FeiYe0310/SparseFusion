@@ -88,34 +88,14 @@ class MBPPDataset(Dataset):
     
     def _build_prompt(self, item: Dict) -> str:
         """
-        构建生成代码的prompt
-        
-        格式：
-        请实现以下Python函数：
-        
-        {text}
-        
-        要求：
-        - 只输出完整的Python函数实现代码
-        - 不要包含解释文字
-        - 不要包含if __name__ == '__main__'块
-        - 确保代码可以直接执行
+        使用官方字段生成提示：严格返回数据集中已有的英文描述，不做包装。
+        优先顺序：prompt > text > description > task_description
         """
-        text = item.get("text", "")
-        
-        prompt = f"""请实现以下Python函数：
-
-{text}
-
-要求：
-- 只输出完整的Python函数实现代码
-- 不要包含解释文字和额外的import语句（除非必需）
-- 不要包含if __name__ == '__main__'块
-- 确保代码可以直接执行并通过测试
-
-函数实现：
-"""
-        return prompt
+        for key in ("prompt", "text", "description", "task_description"):
+            val = item.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        return ""
 
 
 def mbpp_collate_fn(batch, tokenizer, max_length=512):
