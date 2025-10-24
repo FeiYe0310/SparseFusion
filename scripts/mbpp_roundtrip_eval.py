@@ -4,6 +4,7 @@ import argparse
 import json
 import random
 import torch
+import sys
 
 # Ensure JAX runs on CPU for flatten/restore
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
@@ -11,6 +12,12 @@ os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from torch.utils.data import DataLoader, Subset
+
+# Add project root to sys.path so we can import helper modules when running from scripts/
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from helper_fn import (
     pytorch_to_jax_flattened,
