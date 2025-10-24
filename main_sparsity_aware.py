@@ -61,6 +61,8 @@ def parse_arguments():
                         help="Log detailed sparsity statistics during evolution")
     parser.add_argument("--output_dir", type=str, default="results",
                         help="Output directory for results")
+    parser.add_argument("--no_save_best_model", action="store_true",
+                        help="Do not save the final best model .npz; only save results .pkl/.json")
     
     # 🚀 加速参数
     parser.add_argument("--eval_subset_size", type=int, default=None,
@@ -76,6 +78,29 @@ def parse_arguments():
                         help="Weight for GSM8K task in multi-task learning")
     parser.add_argument("--bfcl_weight", type=float, default=0.5,
                         help="Weight for BFCL task in multi-task learning")
+    
+    # 🎯 MBPP代码生成评估参数
+    parser.add_argument("--use_mbpp_eval", action="store_true",
+                        help="Enable MBPP code generation evaluation")
+    parser.add_argument("--mbpp_data_path", type=str,
+                        default="mbpp",
+                        help="Path to MBPP test dataset or HF identifier")
+    parser.add_argument("--mbpp_weight", type=float, default=0.33,
+                        help="Weight for MBPP task in multi-task learning")
+    
+    # DoT: 4x4 / 5x5 Multiplication & Boolean Logic (optional)
+    parser.add_argument("--use_mult4_eval", action="store_true",
+                        help="Enable 4x4 multiplication evaluation (DoT-style)")
+    parser.add_argument("--use_mult5_eval", action="store_true",
+                        help="Enable 5x5 multiplication evaluation (DoT-style)")
+    parser.add_argument("--use_bool_eval", action="store_true",
+                        help="Enable Boolean logic evaluation (DoT-style)")
+    parser.add_argument("--mult4_weight", type=float, default=0.0,
+                        help="Weight for 4x4 multiplication in multi-task")
+    parser.add_argument("--mult5_weight", type=float, default=0.0,
+                        help="Weight for 5x5 multiplication in multi-task")
+    parser.add_argument("--bool_weight", type=float, default=0.0,
+                        help="Weight for Boolean logic in multi-task")
     
     # 🔄 动态稀疏度调度参数（Cosine Annealing with Warm Restarts）
     parser.add_argument("--use_dynamic_sparsity", action="store_true",
@@ -109,6 +134,18 @@ def main():
         print(f"  GSM8K weight: {args.gsm8k_weight}")
         print(f"  BFCL weight: {args.bfcl_weight}")
         print(f"  BFCL data: {args.bfcl_data_path}")
+    if args.use_mbpp_eval:
+        print(f"🎯 MBPP Evaluation ENABLED")
+        print(f"  MBPP weight: {args.mbpp_weight}")
+        print(f"  MBPP data: {args.mbpp_data_path}")
+    if args.use_mult4_eval or args.use_mult5_eval or args.use_bool_eval:
+        print(f"🎯 DoT-style tasks:")
+        if args.use_mult4_eval:
+            print(f"  4x4 Mult. weight: {args.mult4_weight}")
+        if args.use_mult5_eval:
+            print(f"  5x5 Mult. weight: {args.mult5_weight}")
+        if args.use_bool_eval:
+            print(f"  Boolean Logic weight: {args.bool_weight}")
     print(f"\nSparsity-Aware Parameters:")
     print(f"  ω (omega): {args.omega} - Fitness weight")
     print(f"  β (beta): {args.beta} - Sparsity weight")
@@ -169,12 +206,23 @@ def main():
         bfcl_data_path=args.bfcl_data_path,
         gsm8k_weight=args.gsm8k_weight,
         bfcl_weight=args.bfcl_weight,
+        use_mbpp_eval=args.use_mbpp_eval,  # 🎯 MBPP评估
+        mbpp_data_path=args.mbpp_data_path,
+        mbpp_weight=args.mbpp_weight,
+        # DoT tasks
+        use_mult4_eval=args.use_mult4_eval,
+        use_mult5_eval=args.use_mult5_eval,
+        use_bool_eval=args.use_bool_eval,
+        mult4_weight=args.mult4_weight,
+        mult5_weight=args.mult5_weight,
+        bool_weight=args.bool_weight,
         # 🔄 动态稀疏度参数
         use_dynamic_sparsity=args.use_dynamic_sparsity,
         sparsity_min=args.sparsity_min,
         sparsity_max=args.sparsity_max,
         sparsity_t0=args.sparsity_t0,
         sparsity_t_mult=args.sparsity_t_mult,
+        save_best_model=(not args.no_save_best_model),
     )
 
     # Save results
@@ -191,11 +239,35 @@ def main():
     if args.no_matchmaker and not args.no_crossover:
         filename_parts.append("no_matchmaker")
     
-    # Add parameter info
+    # Add core param info (fitness/sparsity/tau)
     filename_parts.append(f"w{args.omega:.2f}_b{args.beta:.2f}_t{args.tau:.2f}")
+
+    # Add run scale info
+    filename_parts.append(f"pop{args.pop_size}")
+    filename_parts.append(f"fp{args.total_forward_passes}")
+    filename_parts.append(f"runs{args.runs}")
+    if args.eval_subset_size:
+        filename_parts.append(f"subset{args.eval_subset_size}")
+
+    # Add task/weight info (compact)
+    filename_parts.append(f"gsm{args.gsm8k_weight:.2f}")
+    if args.use_bfcl_eval:
+        filename_parts.append(f"bfcl{args.bfcl_weight:.2f}")
+    if args.use_mbpp_eval:
+        filename_parts.append(f"mbpp{args.mbpp_weight:.2f}")
+    if args.use_mult4_eval:
+        filename_parts.append(f"m4{args.mult4_weight:.2f}")
+    if args.use_mult5_eval:
+        filename_parts.append(f"m5{args.mult5_weight:.2f}")
+    if args.use_bool_eval:
+        filename_parts.append(f"bool{args.bool_weight:.2f}")
     
-    # Add pruning info if enabled
-    if args.pruning_sparsity > 0:
+    # Add pruning/dynamic sparsity info
+    if args.use_dynamic_sparsity:
+        filename_parts.append(
+            f"dyn{args.sparsity_min:.2f}-{args.sparsity_max:.2f}"
+        )
+    elif args.pruning_sparsity > 0:
         filename_parts.append(f"prune_{args.pruning_method}_{args.pruning_sparsity:.2f}")
     
     base_filename = "_".join(filename_parts)

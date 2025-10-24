@@ -72,6 +72,13 @@ from helper_fn import (
 )
 from config import GSM8K_DIR, RESULTS_DIR
 from lib.async_shard import AsyncShardCoordinator
+from dot_eval_utils import (
+    generate_mult_dataset,
+    generate_bool_dataset,
+    parse_int_from_text,
+    parse_bool_from_text,
+    dot_collate,
+)
 
 
 def _init_distributed_if_needed() -> tuple[int, int]:
@@ -867,6 +874,10 @@ def run_natural_niches_sparsity_aware(
     bfcl_data_path: str = "bfcl/data/bfcl_test_200.json",  # BFCL数据路径
     gsm8k_weight: float = 0.5,  # GSM8K任务权重
     bfcl_weight: float = 0.5,  # BFCL任务权重
+    # 🎯 MBPP: MBPP代码生成评估
+    use_mbpp_eval: bool = False,  # 是否启用MBPP评估
+    mbpp_data_path: str = "mbpp/data/mbpp_test.json",  # MBPP数据路径
+    mbpp_weight: float = 0.33,  # MBPP任务权重
     # 🔄 NEW: Dynamic Sparsity with Warm Restarts
     use_dynamic_sparsity: bool = False,  # 是否启用动态稀疏度调度
     sparsity_min: float = 0.1,  # 最小稀疏度 (eta_min)
@@ -875,6 +886,14 @@ def run_natural_niches_sparsity_aware(
     sparsity_t_mult: int = 2,  # 周期长度乘数（1=固定周期，2=每次翻倍）
     async_num_nodes: Optional[int] = None,
     async_sync_interval: int = 10,
+    # DoT tasks optional
+    use_mult4_eval: bool = False,
+    use_mult5_eval: bool = False,
+    use_bool_eval: bool = False,
+    mult4_weight: float = 0.0,
+    mult5_weight: float = 0.0,
+    bool_weight: float = 0.0,
+    save_best_model: bool = True,
 ) -> list:
     """
     Run Natural Niches with Sparsity-Aware Selection and Wanda Pruning
@@ -1036,7 +1055,26 @@ def run_natural_niches_sparsity_aware(
             bfcl_dataset = None
             use_bfcl_eval = False
 
-    # 初始num_tasks设置（后续会根据是否使用BFCL和分布式调整）
+    # ============================================================================
+    # 🎯 MBPP Data Loading (if enabled)
+    # ============================================================================
+    mbpp_dataset = None
+    if use_mbpp_eval:
+        if is_main_process:
+            print(f"\n🎯 Loading MBPP dataset: {mbpp_data_path}")
+        try:
+            from mbpp_data_utils import MBPPDataset
+            mbpp_dataset = MBPPDataset(mbpp_data_path, tokenizer)
+            if is_main_process:
+                print(f"✅ MBPP dataset loaded: {len(mbpp_dataset)} samples")
+        except Exception as e:
+            if is_main_process:
+                print(f"❌ Failed to load MBPP dataset: {e}")
+                print("Continuing without MBPP...")
+            mbpp_dataset = None
+            use_mbpp_eval = False
+    
+    # 初始num_tasks设置（后续会根据是否使用BFCL/MBPP和分布式调整）
     num_tasks = len(tokenized_train_dataset)
     if dist_enabled and world_size > 1:
         num_tasks = num_tasks * world_size  # 分布式聚合后的总任务数
@@ -1061,12 +1099,45 @@ def run_natural_niches_sparsity_aware(
     # ============================================================================
     # 🎯 Create Evaluation Functions (GSM8K or Multi-Task)
     # ============================================================================
-    if use_bfcl_eval and bfcl_dataset is not None:
-        # Multi-task evaluation: GSM8K + BFCL
+    if (use_bfcl_eval and bfcl_dataset is not None) or (use_mbpp_eval and mbpp_dataset is not None) or (use_mult4_eval or use_mult5_eval or use_bool_eval):
+        # Multi-task evaluation: GSM8K + (BFCL) + (MBPP) + (DoT)
         if is_main_process:
-            print("\n🎯 Creating Multi-Task Evaluation (GSM8K + BFCL)")
+            task_names = ["GSM8K"]
+            if bfcl_dataset is not None and use_bfcl_eval:
+                task_names.append("BFCL")
+            if mbpp_dataset is not None and use_mbpp_eval:
+                task_names.append("MBPP")
+            if use_mult4_eval:
+                task_names.append("4x4 Mult.")
+            if use_mult5_eval:
+                task_names.append("5x5 Mult.")
+            if use_bool_eval:
+                task_names.append("Boolean")
+            print(f"\n🎯 Creating Multi-Task Evaluation ({' + '.join(task_names)})")
             print(f"  GSM8K weight: {gsm8k_weight}")
-            print(f"  BFCL weight: {bfcl_weight}")
+            if use_bfcl_eval and bfcl_dataset is not None:
+                print(f"  BFCL weight: {bfcl_weight}")
+            if use_mbpp_eval and mbpp_dataset is not None:
+                print(f"  MBPP weight: {mbpp_weight}")
+            if use_mult4_eval:
+                print(f"  4x4 Mult. weight: {mult4_weight}")
+            if use_mult5_eval:
+                print(f"  5x5 Mult. weight: {mult5_weight}")
+            if use_bool_eval:
+                print(f"  Boolean weight: {bool_weight}")
+        
+        # 任务权重字典（如需用到）
+        task_weights_dict = {"gsm8k": gsm8k_weight}
+        if use_bfcl_eval and bfcl_dataset is not None:
+            task_weights_dict["bfcl"] = bfcl_weight
+        if use_mbpp_eval and mbpp_dataset is not None:
+            task_weights_dict["mbpp"] = mbpp_weight
+        if use_mult4_eval:
+            task_weights_dict["mult4"] = mult4_weight
+        if use_mult5_eval:
+            task_weights_dict["mult5"] = mult5_weight
+        if use_bool_eval:
+            task_weights_dict["bool"] = bool_weight
 
         train_eval_fn = create_multi_task_evaluation_fn(
             model_skeleton,
@@ -1074,11 +1145,15 @@ def run_natural_niches_sparsity_aware(
             tokenized_train_dataset,
             bfcl_dataset,
             tokenizer,
-            task_weights={"gsm8k": gsm8k_weight, "bfcl": bfcl_weight},
+            task_weights=task_weights_dict,
             distributed=dist_enabled,
             world_size=world_size,
+            mbpp_dataset=mbpp_dataset,
             rank=rank,
             eval_subset_size=eval_subset_size,
+            use_mult4_eval=use_mult4_eval,
+            use_mult5_eval=use_mult5_eval,
+            use_bool_eval=use_bool_eval,
         )
 
         # Test evaluation: GSM8K only (for compatibility)
@@ -1094,12 +1169,39 @@ def run_natural_niches_sparsity_aware(
         )
 
         # Update num_tasks for competitive normalization
-        # Multi-task: eval_subset_size * 2 (GSM8K + BFCL)
+        # Multi-task: sum of actual samples per task (considering eval_subset_size and dataset size)
+        # 只计算权重>0的任务
         if eval_subset_size is not None:
-            num_tasks = eval_subset_size * 2
+            num_tasks = 0
+            if task_weights_dict.get('gsm8k', 0.0) > 0:
+                num_tasks += min(eval_subset_size, len(tokenized_train_dataset))
+            if use_bfcl_eval and bfcl_dataset is not None and task_weights_dict.get('bfcl', 0.0) > 0:
+                num_tasks += min(eval_subset_size, len(bfcl_dataset))
+            if use_mbpp_eval and mbpp_dataset is not None and task_weights_dict.get('mbpp', 0.0) > 0:
+                num_tasks += min(eval_subset_size, len(mbpp_dataset))
+            if use_mult4_eval and task_weights_dict.get('mult4', 0.0) > 0:
+                num_tasks += eval_subset_size  # DoT任务在线生成，总是eval_subset_size
+            if use_mult5_eval and task_weights_dict.get('mult5', 0.0) > 0:
+                num_tasks += eval_subset_size
+            if use_bool_eval and task_weights_dict.get('bool', 0.0) > 0:
+                num_tasks += eval_subset_size
         else:
-            num_tasks = len(tokenized_train_dataset) + len(bfcl_dataset)
-
+            # 只计算权重>0的任务的样本数
+            num_tasks = 0
+            if task_weights_dict.get('gsm8k', 0.0) > 0:
+                num_tasks += len(tokenized_train_dataset)
+            if use_bfcl_eval and bfcl_dataset is not None and task_weights_dict.get('bfcl', 0.0) > 0:
+                num_tasks += len(bfcl_dataset)
+            if use_mbpp_eval and mbpp_dataset is not None and task_weights_dict.get('mbpp', 0.0) > 0:
+                num_tasks += len(mbpp_dataset)
+            # DoT在线任务：若未采样子集，按评估默认数量（与eval_subset_size等同或20）
+            default_dot = 20
+            if use_mult4_eval and task_weights_dict.get('mult4', 0.0) > 0:
+                num_tasks += default_dot
+            if use_mult5_eval and task_weights_dict.get('mult5', 0.0) > 0:
+                num_tasks += default_dot
+            if use_bool_eval and task_weights_dict.get('bool', 0.0) > 0:
+                num_tasks += default_dot
     else:
         # Single-task evaluation: GSM8K only
         if is_main_process:
@@ -1486,68 +1588,47 @@ def run_natural_niches_sparsity_aware(
                 if dist_enabled:
                     dist.barrier()
 
-                # --- Periodic Full Archive Evaluation (IDENTICAL TO ORIGINAL) ---
+                # --- Periodic Full Archive Reporting: print fitness instead of GSM8K accuracy ---
                 if (i + 1) % 10 == 0:
                     if is_main_process:
                         print(
-                            f"\n--- [Step {i+1}/{total_forward_passes}] Evaluating full archive ---"
+                            f"\n--- [Step {i+1}/{total_forward_passes}] Archive fitness snapshot ---"
                         )
 
-                    for j in range(pop_size):
-                        if dist_enabled:
-                            if is_main_process:
-                                individual_params = archive[j]
-                                params_tensor = torch.from_numpy(
-                                    np.array(individual_params.astype(jnp.float32))
-                                )
-                            else:
-                                params_tensor = torch.empty(
-                                    num_params_llm, dtype=torch.float32
-                                )
+                        # Compute per-individual fitness (normalized) on current training scores
+                        fitness_vector = compute_normalized_fitness(
+                            scores, alpha, num_tasks
+                        )
 
-                            # Move to GPU for NCCL backend
-                            params_tensor = params_tensor.to(device)
-                            dist.broadcast(params_tensor, src=0)
-                            # Move back to CPU for numpy conversion
-                            params_tensor = params_tensor.cpu()
-                            params_bf16 = jnp.array(params_tensor.numpy()).astype(
-                                jnp.bfloat16
-                            )
-                        else:
-                            params_bf16 = archive[j]
-
-                        test_scores_vector = test_eval_fn(params_bf16)
-
-                        if is_main_process:
-                            acc = jnp.mean(test_scores_vector)
-
-                            # Log sparsity alongside accuracy
+                        for j in range(pop_size):
+                            ind_fitness = float(fitness_vector[j])
                             if log_sparsity_stats:
-                                ind_sparsity = compute_sparsity(params_bf16, epsilon)
+                                ind_sparsity = compute_sparsity(archive[j], epsilon)
                                 print(
                                     f"  > Archive Individual {j+1}/{pop_size} | "
-                                    f"Test Acc: {acc:.4f} | Sparsity: {ind_sparsity:.4f}"
+                                    f"Fitness: {ind_fitness:.4f} | Sparsity: {ind_sparsity:.4f}"
                                 )
                             else:
                                 print(
-                                    f"  > Archive Individual {j+1}/{pop_size} | Test Accuracy: {acc:.4f}"
+                                    f"  > Archive Individual {j+1}/{pop_size} | Fitness: {ind_fitness:.4f}"
                                 )
 
-                            # Record test evaluation results
-                            if "test_evaluations" not in results[run]:
-                                results[run]["test_evaluations"] = []
+                            # Record fitness snapshot (for analysis)
+                            if "fitness_evaluations" not in results[run]:
+                                results[run]["fitness_evaluations"] = []
 
-                            test_eval_stats = {
-                                "iteration": i + 1,
-                                "individual": j + 1,
-                                "test_accuracy": float(acc),
-                                "sparsity": (
-                                    float(compute_sparsity(params_bf16, epsilon))
-                                    if log_sparsity_stats
-                                    else None
-                                ),
-                            }
-                            results[run]["test_evaluations"].append(test_eval_stats)
+                            results[run]["fitness_evaluations"].append(
+                                {
+                                    "iteration": i + 1,
+                                    "individual": j + 1,
+                                    "fitness": ind_fitness,
+                                    "sparsity": (
+                                        float(compute_sparsity(archive[j], epsilon))
+                                        if log_sparsity_stats
+                                        else None
+                                    ),
+                                }
+                            )
 
                 # --- Periodic Checkpoint Save (Every 50 steps to prevent data loss) ---
                 if (i + 1) % 1000 == 0 and is_main_process:
@@ -1577,8 +1658,8 @@ def run_natural_niches_sparsity_aware(
         if dist_enabled:
             dist.barrier()
 
-        # --- Save Final Best Model (Main Process Only) ---
-        if is_main_process:
+        # --- Save Final Best Model (Main Process Only, optional) ---
+        if is_main_process and save_best_model:
             if runs > 0:
                 # Find best based on Total Score
                 total_scores = compute_total_scores(
@@ -1592,9 +1673,39 @@ def run_natural_niches_sparsity_aware(
                 from datetime import datetime
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Compact tags for filename for easier experiment identification
+                tags = [
+                    f"pop{pop_size}",
+                    f"fp{total_forward_passes}",
+                    f"runs{runs}",
+                    f"w{omega:.2f}",
+                    f"b{beta:.2f}",
+                    f"t{tau:.2f}",
+                ]
+                if eval_subset_size is not None:
+                    tags.append(f"subset{eval_subset_size}")
+                # Task weights
+                tags.append(f"gsm{gsm8k_weight:.2f}")
+                if use_bfcl_eval and bfcl_dataset is not None:
+                    tags.append(f"bfcl{bfcl_weight:.2f}")
+                if use_mbpp_eval and mbpp_dataset is not None:
+                    tags.append(f"mbpp{mbpp_weight:.2f}")
+                if use_mult4_eval:
+                    tags.append(f"m4{mult4_weight:.2f}")
+                if use_mult5_eval:
+                    tags.append(f"m5{mult5_weight:.2f}")
+                if use_bool_eval:
+                    tags.append(f"bool{bool_weight:.2f}")
+                # Pruning/dynamic sparsity
+                if use_dynamic_sparsity:
+                    tags.append(f"dyn{sparsity_min:.2f}-{sparsity_max:.2f}")
+                elif pruning_sparsity > 0:
+                    tags.append(f"prune_{pruning_method}_{pruning_sparsity:.2f}")
+
+                tag_str = "_".join(tags)
                 save_path = os.path.join(
                     RESULTS_DIR,
-                    f"best_model_sparsity_aware_run_{run+1}_{timestamp}.npz",
+                    f"best_model_{tag_str}_{timestamp}.npz",
                 )
 
                 print(
@@ -1800,6 +1911,196 @@ def create_bfcl_evaluation_fn(
     return evaluation_fn
 
 
+# ========== MBPP评估函数 ==========
+def create_mbpp_evaluation_fn(
+    model_skeleton,
+    param_shapes,
+    mbpp_dataset,
+    tokenizer: AutoTokenizer,
+    batch_size: int = 4,
+    distributed: bool = False,
+    world_size: int = 1,
+    rank: int = 0,
+    eval_subset_size: int = None,
+    return_subset_only: bool = False,  # 多任务评估时设为True，不进行分布式聚合
+):
+    """
+    创建MBPP (Mostly Basic Python Problems) 评估函数
+    
+    评估代码生成能力：
+    1. 给定问题描述
+    2. 模型生成Python代码
+    3. 执行单元测试验证正确性
+    
+    Returns:
+        evaluation_fn: 返回每个样本的得分 (1.0=所有测试通过, 0.0=失败)
+    """
+    from mbpp_data_utils import mbpp_collate_fn
+    from torch.utils.data import DataLoader, Subset
+    import random
+    import subprocess
+    import tempfile
+    import uuid
+    
+    device = next(model_skeleton.parameters()).device
+    iteration_counter = {'count': 0}
+    
+    def safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
+        """
+        安全执行代码并运行测试
+        
+        Args:
+            code: 生成的代码
+            tests: 测试用例列表（assert语句）
+            setup_code: 测试前置代码
+            timeout: 超时时间（秒）
+        
+        Returns:
+            是否所有测试通过
+        """
+        # 构建完整的测试程序
+        program_parts = []
+        
+        # 添加setup代码
+        if setup_code:
+            program_parts.append(setup_code)
+        
+        # 添加生成的代码
+        program_parts.append(code)
+        
+        # 添加测试用例
+        program_parts.extend(tests)
+        
+        # 添加成功标记
+        program_parts.append("print('__MBPP_ALL_TESTS_PASSED__')")
+        
+        program = "\n".join(program_parts)
+        
+        # 使用临时文件执行
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                filepath = os.path.join(tmpdir, f"{uuid.uuid4().hex}.py")
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(program)
+                
+                # 执行代码
+                result = subprocess.run(
+                    ["python3", filepath],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env={"PYTHONDONTWRITEBYTECODE": "1"}  # 不生成.pyc文件
+                )
+                
+                # 检查是否成功
+                success = (
+                    "__MBPP_ALL_TESTS_PASSED__" in (result.stdout or "") 
+                    and result.returncode == 0
+                )
+                
+                return success
+                
+        except subprocess.TimeoutExpired:
+            return False  # 超时视为失败
+        except Exception:
+            return False  # 任何异常都视为失败
+    
+    def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
+        """评估MBPP任务"""
+        iteration_counter['count'] += 1
+        
+        # 采样子集
+        if eval_subset_size is not None and eval_subset_size < len(mbpp_dataset):
+            indices = random.sample(range(len(mbpp_dataset)), eval_subset_size)
+            eval_dataset = Subset(mbpp_dataset, indices)
+            if rank == 0:
+                print(f"  [MBPP] 采样 {eval_subset_size}/{len(mbpp_dataset)} 样本")
+        else:
+            eval_dataset = mbpp_dataset
+        
+        # DataLoader (使用MBPP专用的collate_fn)
+        dataloader = DataLoader(
+            eval_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=lambda batch: mbpp_collate_fn(batch, tokenizer),
+        )
+        
+        # 重建模型参数（使用和GSM8K/BFCL相同的方式）
+        base_model = (
+            model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+        )
+        restored_model = jax_flattened_to_pytorch_model(
+            flat_params, base_model, param_shapes
+        )
+        restored_model.eval()
+        
+        # 评估
+        all_scores = []
+        with torch.no_grad():
+            for batch in dataloader:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                test_lists = batch['test_list']
+                setup_codes = batch['test_setup_code']
+                
+                # Generate代码
+                generated_ids = restored_model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=512,  # MBPP可能需要更长的代码
+                    do_sample=False,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                )
+                
+                # Decode生成的代码
+                generated_codes = tokenizer.batch_decode(
+                    generated_ids[:, input_ids.shape[1]:],
+                    skip_special_tokens=True
+                )
+                
+                # 执行测试评估每个样本
+                for sample_idx, (gen_code, tests, setup) in enumerate(zip(generated_codes, test_lists, setup_codes)):
+                    try:
+                        # 清理生成的代码（移除markdown代码块标记等）
+                        clean_code = gen_code.strip()
+                        if clean_code.startswith("```python"):
+                            clean_code = clean_code[len("```python"):].strip()
+                        if clean_code.startswith("```"):
+                            clean_code = clean_code[3:].strip()
+                        if clean_code.endswith("```"):
+                            clean_code = clean_code[:-3].strip()
+                        
+                        # 执行测试
+                        is_correct = safe_execute_code(clean_code, tests, setup)
+                        all_scores.append(1.0 if is_correct else 0.0)
+                        
+                        # 调试：打印前2个样本的输出
+                        if rank == 0 and len(all_scores) <= 2:
+                            print(f"  [MBPP] Sample {len(all_scores)}:")
+                            print(f"    Generated: {gen_code[:150]}...")
+                            print(f"    Tests: {tests[:3]}")
+                            print(f"    Correct: {is_correct}")
+                    except Exception as e:
+                        all_scores.append(0.0)  # 任何异常都视为失败
+                        if rank == 0 and len(all_scores) <= 2:
+                            print(f"  [MBPP] Sample {len(all_scores)}: Exception - {str(e)[:100]}")
+        
+        # 分布式聚合（与GSM8K/BFCL评估函数保持一致）
+        if distributed and world_size > 1 and not return_subset_only:
+            scores_tensor = torch.tensor(all_scores, dtype=torch.float32, device=device)
+            gathered = [torch.zeros_like(scores_tensor) for _ in range(world_size)]
+            torch.distributed.all_gather(gathered, scores_tensor)
+            # 截断到eval_dataset的长度
+            all_scores = torch.cat(gathered)[:len(eval_dataset)].cpu().numpy().tolist()
+        
+        return jnp.array(all_scores, dtype=jnp.float32)
+    
+    return evaluation_fn
+
+
 # ========== 多任务评估函数 ==========
 def create_multi_task_evaluation_fn(
     model_skeleton,
@@ -1813,22 +2114,31 @@ def create_multi_task_evaluation_fn(
     world_size=1,
     rank=0,
     eval_subset_size=None,
+    mbpp_dataset=None,  # 🆕 新增MBPP数据集参数
+    use_mult4_eval: bool = False,
+    use_mult5_eval: bool = False,
+    use_bool_eval: bool = False,
 ):
     """
     创建多任务评估函数：同时评估GSM8K和BFCL
 
     Args:
-        task_weights: 任务权重字典，例如 {"gsm8k": 0.5, "bfcl": 0.5}
+        task_weights: 任务权重字典，例如 {"gsm8k": 0.4, "bfcl": 0.3, "mbpp": 0.3}
                      如果为None，则拼接所有任务的分数
         eval_subset_size: 每个任务采样的样本数
-
+        mbpp_dataset: MBPP数据集（如果为None则不评估MBPP）
+        
     Returns:
         evaluation_fn: 返回所有任务的分数拼接结果
     """
+    # 默认权重
     if task_weights is None:
-        task_weights = {"gsm8k": 0.5, "bfcl": 0.5}
-
-    # 创建两个评估函数
+        if mbpp_dataset is not None:
+            task_weights = {"gsm8k": 0.4, "bfcl": 0.3, "mbpp": 0.3}
+        else:
+            task_weights = {"gsm8k": 0.5, "bfcl": 0.5}
+    
+    # 创建GSM8K评估函数
     gsm8k_eval_fn = create_evaluation_fn_for_llm(
         model_skeleton,
         param_shapes,
@@ -1841,29 +2151,208 @@ def create_multi_task_evaluation_fn(
         eval_subset_size=eval_subset_size,
         return_subset_only=True,  # 多任务：不扩展，直接返回子集分数
     )
-
-    bfcl_eval_fn = create_bfcl_evaluation_fn(
-        model_skeleton,
-        param_shapes,
-        bfcl_dataset,
-        tokenizer,
-        batch_size=batch_size,
-        distributed=distributed,
-        world_size=world_size,
-        rank=rank,
-        eval_subset_size=eval_subset_size,
-        return_subset_only=True,  # 多任务评估：不进行分布式聚合
-    )
+    
+    # 创建BFCL评估函数（仅当提供了数据集）
+    bfcl_eval_fn = None
+    if bfcl_dataset is not None:
+        bfcl_eval_fn = create_bfcl_evaluation_fn(
+            model_skeleton,
+            param_shapes,
+            bfcl_dataset,
+            tokenizer,
+            batch_size=batch_size,
+            distributed=distributed,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=eval_subset_size,
+            return_subset_only=True,  # 多任务评估：不进行分布式聚合
+        )
+    
+    # 创建MBPP评估函数（如果提供了数据集）
+    mbpp_eval_fn = None
+    if mbpp_dataset is not None:
+        mbpp_eval_fn = create_mbpp_evaluation_fn(
+            model_skeleton, param_shapes, mbpp_dataset, tokenizer,
+            batch_size=batch_size,
+            distributed=distributed,
+            world_size=world_size,
+            rank=rank,
+            eval_subset_size=eval_subset_size,
+            return_subset_only=True,  # 多任务评估：不进行分布式聚合
+        )
+    
+    # 创建DoT评估函数（在线生成）
+    mult4_eval_fn = None
+    mult5_eval_fn = None
+    bool_eval_fn = None
+    if use_mult4_eval:
+        mult4_eval_fn = create_dot_eval_fn(
+            model_skeleton, param_shapes, tokenizer,
+            task='mult4', num_samples=(eval_subset_size or 20),
+            batch_size=max(1, batch_size), distributed=distributed,
+            world_size=world_size, rank=rank,
+        )
+    if use_mult5_eval:
+        mult5_eval_fn = create_dot_eval_fn(
+            model_skeleton, param_shapes, tokenizer,
+            task='mult5', num_samples=(eval_subset_size or 20),
+            batch_size=max(1, batch_size), distributed=distributed,
+            world_size=world_size, rank=rank,
+        )
+    if use_bool_eval:
+        bool_eval_fn = create_dot_eval_fn(
+            model_skeleton, param_shapes, tokenizer,
+            task='bool', num_samples=(eval_subset_size or 20),
+            batch_size=max(1, batch_size), distributed=distributed,
+            world_size=world_size, rank=rank,
+        )
 
     def evaluation_fn(flat_params):
-        """评估两个任务并拼接分数"""
-        # 评估两个任务
-        gsm8k_scores = gsm8k_eval_fn(flat_params)  # shape: (n1,)
-        bfcl_scores = bfcl_eval_fn(flat_params)  # shape: (n2,)
+        import time
+        scores_list = []
+        task_times = {}
+        task_scores = {}
+        
+        # GSM8K (跳过权重为0的任务)
+        if task_weights.get('gsm8k', 0.0) > 0:
+            start_time = time.time()
+            gsm8k_scores = gsm8k_eval_fn(flat_params)
+            task_times['GSM8K'] = time.time() - start_time
+            task_scores['GSM8K'] = float(jnp.mean(gsm8k_scores))
+            scores_list.append(gsm8k_scores)
+        
+        # BFCL（可选，跳过权重为0的任务）
+        if bfcl_eval_fn is not None and task_weights.get('bfcl', 0.0) > 0:
+            start_time = time.time()
+            bfcl_scores = bfcl_eval_fn(flat_params)
+            task_times['BFCL'] = time.time() - start_time
+            task_scores['BFCL'] = float(jnp.mean(bfcl_scores))
+            scores_list.append(bfcl_scores)
+        
+        # MBPP（可选，跳过权重为0的任务）
+        if mbpp_eval_fn is not None and task_weights.get('mbpp', 0.0) > 0:
+            start_time = time.time()
+            mbpp_scores = mbpp_eval_fn(flat_params)
+            task_times['MBPP'] = time.time() - start_time
+            task_scores['MBPP'] = float(jnp.mean(mbpp_scores))
+            scores_list.append(mbpp_scores)
+        
+        # DoT（可选，跳过权重为0的任务）
+        if mult4_eval_fn is not None and task_weights.get('mult4', 0.0) > 0:
+            start_time = time.time()
+            mult4_scores = mult4_eval_fn(flat_params)
+            task_times['Mult4'] = time.time() - start_time
+            task_scores['Mult4'] = float(jnp.mean(mult4_scores))
+            scores_list.append(mult4_scores)
+        
+        if mult5_eval_fn is not None and task_weights.get('mult5', 0.0) > 0:
+            start_time = time.time()
+            mult5_scores = mult5_eval_fn(flat_params)
+            task_times['Mult5'] = time.time() - start_time
+            task_scores['Mult5'] = float(jnp.mean(mult5_scores))
+            scores_list.append(mult5_scores)
+        
+        if bool_eval_fn is not None and task_weights.get('bool', 0.0) > 0:
+            start_time = time.time()
+            bool_scores = bool_eval_fn(flat_params)
+            task_times['Boolean'] = time.time() - start_time
+            task_scores['Boolean'] = float(jnp.mean(bool_scores))
+            scores_list.append(bool_scores)
+        
+        # 打印任务性能统计
+        if rank == 0:
+            print(f"\n{'='*70}")
+            print(f"📊 任务性能统计")
+            print(f"{'='*70}")
+            print(f"{'任务':<15} {'耗时(s)':>12} {'平均得分':>15} {'得分/秒':>15}")
+            print(f"{'-'*70}")
+            for task_name in task_times.keys():
+                t = task_times[task_name]
+                s = task_scores[task_name]
+                efficiency = s / t if t > 0 else 0
+                print(f"{task_name:<15} {t:>12.2f} {s:>15.4f} {efficiency:>15.6f}")
+            print(f"{'='*70}\n")
+        
+        return jnp.concatenate(scores_list)
 
-        # 拼接所有分数（保持per-sample粒度用于competitive normalization）
-        all_scores = jnp.concatenate([gsm8k_scores, bfcl_scores])
+    return evaluation_fn
 
-        return all_scores
+def create_dot_eval_fn(
+    model_skeleton,
+    param_shapes,
+    tokenizer,
+    task: str,  # 'mult4' | 'mult5' | 'bool'
+    num_samples: int,
+    batch_size: int = 8,
+    distributed: bool = False,
+    world_size: int = 1,
+    rank: int = 0,
+):
+    """在线生成DoT风格任务并评估（pass@1）。"""
+    import torch
+    device = next(model_skeleton.parameters()).device
+
+    # 生成数据
+    if task == 'mult4':
+        dataset = generate_mult_dataset(num_samples=num_samples, digits=4, seed=2025)
+        parse_fn = parse_int_from_text
+    elif task == 'mult5':
+        dataset = generate_mult_dataset(num_samples=num_samples, digits=5, seed=2025)
+        parse_fn = parse_int_from_text
+    elif task == 'bool':
+        dataset = generate_bool_dataset(num_samples=num_samples, seed=2025)
+        parse_fn = parse_bool_from_text
+    else:
+        raise ValueError(f"Unknown DoT task: {task}")
+
+    prompts = [item['prompt'] for item in dataset]
+    golds = [item['gold'] for item in dataset]
+
+    def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
+        base_model = (
+            model_skeleton.module if hasattr(model_skeleton, "module") else model_skeleton
+        )
+        restored_model = jax_flattened_to_pytorch_model(
+            flat_params, base_model, param_shapes
+        )
+        restored_model.eval()
+
+        all_scores: list[float] = []
+        # 分批tokenize+生成
+        for start in range(0, len(prompts), batch_size):
+            batch_prompts = prompts[start:start+batch_size]
+            batch_golds = golds[start:start+batch_size]
+
+            enc = dot_collate(batch_prompts, tokenizer, max_length=256)
+            input_ids = enc['input_ids'].to(device)
+            attention_mask = enc['attention_mask'].to(device)
+
+            with torch.no_grad():
+                gen_ids = restored_model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=64,
+                    do_sample=False,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                )
+                gen_txts = tokenizer.batch_decode(
+                    gen_ids[:, input_ids.shape[1]:],
+                    skip_special_tokens=True
+                )
+
+            for i, (txt, gold) in enumerate(zip(gen_txts, batch_golds)):
+                pred = parse_fn(txt)
+                is_correct = (pred is not None and pred == gold)
+                all_scores.append(1.0 if is_correct else 0.0)
+                
+                # 调试：打印前3个样本的输出
+                if rank == 0 and start == 0 and i < 3:
+                    print(f"  [{task.upper()}] Sample {i+1}:")
+                    print(f"    Prompt: {batch_prompts[i][:80]}...")
+                    print(f"    Gold: {gold}, Pred: {pred}, Output: {txt[:100]}")
+                    print(f"    Correct: {is_correct}")
+
+        return jnp.array(all_scores, dtype=jnp.float32)
 
     return evaluation_fn
