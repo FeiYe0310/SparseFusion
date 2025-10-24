@@ -131,7 +131,8 @@ def mbpp_collate_fn(batch, tokenizer, max_length=512):
         "test_list": [item.get("test_list", []) for item in batch],
         "test_setup_code": [item.get("test_setup_code", "") for item in batch],
         "test_imports": [item.get("test_imports", "") for item in batch],
-        "reference_code": [item.get("reference_code", "") for item in batch],
+        # Fallback: HF dataset uses 'code' as reference implementation
+        "reference_code": [item.get("reference_code", item.get("code", "")) for item in batch],
         "task_ids": [item["task_id"] for item in batch],
         "prompts": prompts,  # 保留原始prompt用于调试
     }
