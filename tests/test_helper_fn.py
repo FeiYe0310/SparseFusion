@@ -1,7 +1,12 @@
 import torch
 import pytest
+import jax
 
-from helper_fn import merge_tokenizers_and_align_models
+from helper_fn import (
+    merge_tokenizers_and_align_models,
+    pytorch_to_jax_flattened,
+    jax_flattened_to_pytorch_model,
+)
 
 try:
     from transformers import AutoModel, AutoTokenizer
@@ -21,6 +26,16 @@ def _version_tuple(version_str: str) -> tuple[int, int, int]:
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts[:3])
+
+
+class _TinyToyModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fc1 = torch.nn.Linear(8, 16)
+        self.fc2 = torch.nn.Linear(16, 4)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc2(torch.relu(self.fc1(x)))
 
 
 @pytest.mark.skipif(AutoModel is None, reason="transformers is required for this test")
@@ -103,8 +118,8 @@ def test_merge_tokenizers_is_noop_for_identical_qwen_vocab() -> None:
     original_embedding1 = model1.get_input_embeddings().weight.detach().clone()
     original_embedding2 = model2.get_input_embeddings().weight.detach().clone()
 
-    merged_tokenizer, aligned_model1, aligned_model2 = merge_tokenizers_and_align_models(
-        model1, tokenizer1, model2, tokenizer2
+    merged_tokenizer, aligned_model1, aligned_model2 = (
+        merge_tokenizers_and_align_models(model1, tokenizer1, model2, tokenizer2)
     )
 
     assert merged_tokenizer is tokenizer1
@@ -155,7 +170,11 @@ def test_model_outputs_preserved_after_embedding_alignment() -> None:
     attention_mask2 = encoded2["attention_mask"]
 
     def _hidden_state(output):
-        return output.last_hidden_state if hasattr(output, "last_hidden_state") else output[0]
+        return (
+            output.last_hidden_state
+            if hasattr(output, "last_hidden_state")
+            else output[0]
+        )
 
     with torch.no_grad():
         original_output1 = _hidden_state(
@@ -192,3 +211,65 @@ def test_model_outputs_preserved_after_embedding_alignment() -> None:
 
     torch.testing.assert_close(new_output1, original_output1, rtol=1e-4, atol=1e-4)
     torch.testing.assert_close(new_output2, original_output2, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.skipif(jax is None, reason="jax is required for this test")
+def test_toy_model_roundtrip_through_jax_flattening() -> None:
+    torch.manual_seed(0)
+    original_model = _TinyToyModel().eval()
+
+    flat_params, param_shapes, total_params = pytorch_to_jax_flattened(original_model)
+    assert total_params == sum(p.numel() for p in original_model.parameters())
+
+    skeleton_model = _TinyToyModel().eval()
+    with torch.no_grad():
+        for param in skeleton_model.parameters():
+            param.zero_()
+
+    reconstructed_model = jax_flattened_to_pytorch_model(
+        flat_params, skeleton_model, param_shapes
+    )
+
+    for original_tensor, reconstructed_tensor in zip(
+        original_model.parameters(), reconstructed_model.parameters()
+    ):
+        torch.testing.assert_close(
+            reconstructed_tensor, original_tensor, rtol=1e-3, atol=1e-3
+        )
+
+
+@pytest.mark.skipif(AutoModel is None, reason="transformers is required for this test")
+def test_bert_roundtrip_through_jax_flattening() -> None:
+    if _version_tuple(torch.__version__) < (2, 6, 0):
+        pytest.skip("Torch >= 2.6.0 required to load these checkpoints safely.")
+
+    try:
+        original_model = AutoModel.from_pretrained("models/BERTOverflow").eval()
+    except OSError as exc:
+        pytest.skip(f"Required models not available locally: {exc}")
+
+    flat_params, param_shapes, _ = pytorch_to_jax_flattened(original_model)
+
+    try:
+        skeleton_model = AutoModel.from_pretrained("models/BERTOverflow").eval()
+    except OSError as exc:
+        pytest.skip(f"Required models not available locally: {exc}")
+
+    with torch.no_grad():
+        for param in skeleton_model.parameters():
+            param.zero_()
+
+    reconstructed_model = jax_flattened_to_pytorch_model(
+        flat_params, skeleton_model, param_shapes
+    )
+
+    original_params = list(original_model.parameters())
+    reconstructed_params = list(reconstructed_model.parameters())
+
+    assert len(original_params) == len(reconstructed_params)
+    for original_tensor, reconstructed_tensor in zip(
+        original_params, reconstructed_params
+    ):
+        torch.testing.assert_close(
+            reconstructed_tensor, original_tensor, rtol=1e-3, atol=1e-3
+        )
