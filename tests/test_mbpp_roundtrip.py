@@ -32,14 +32,21 @@ from mbpp_data_utils import MBPPDataset, mbpp_collate_fn
 
 
 def _clean_code_block(text: str) -> str:
+    import re
     s = text.strip()
-    if s.startswith("```python"):
-        s = s[len("```python"):].strip()
-    if s.startswith("```"):
-        s = s[3:].strip()
-    if s.endswith("```"):
-        s = s[:-3].strip()
+    m = re.search(r"```python\n([\s\S]*?)\n```", s, re.IGNORECASE)
+    if not m:
+        m = re.search(r"```\n([\s\S]*?)\n```", s)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"def\s+\w+\s*\(.*", s)
+    if m:
+        return s[m.start():].strip()
     return s
+
+def _parse_first_def_name(text: str) -> str | None:
+    m = re.search(r"^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", text, re.MULTILINE)
+    return m.group(1) if m else None
 
 
 def _safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
@@ -104,6 +111,8 @@ def _evaluate_mbpp(model, tokenizer, mbpp_path: str, batch_size: int, subset: in
             attention_mask = batch["attention_mask"].to(device)
             tests_list = batch["test_list"]
             setup_codes = batch["test_setup_code"]
+            imports_codes = batch.get("test_imports", [""]*len(setup_codes))
+            ref_codes = batch.get("reference_code", [""]*len(setup_codes))
 
             gen_ids = model.generate(
                 input_ids=input_ids,
@@ -117,9 +126,13 @@ def _evaluate_mbpp(model, tokenizer, mbpp_path: str, batch_size: int, subset: in
                 gen_ids[:, input_ids.shape[1]:], skip_special_tokens=True
             )
 
-            for gen, tests, setup in zip(gen_texts, tests_list, setup_codes):
+            for gen, tests, setup, imports_code, ref_code in zip(gen_texts, tests_list, setup_codes, imports_codes, ref_codes):
                 code = _clean_code_block(gen)
-                ok = _safe_execute_code(code, tests, setup)
+                expected = _parse_first_def_name(ref_code or "")
+                got = _parse_first_def_name(code)
+                alias_line = f"{expected} = {got}" if expected and got and expected != got else ""
+                combined_setup = "\n".join([x for x in [imports_code or "", setup or "", alias_line] if x])
+                ok = _safe_execute_code(code, tests, combined_setup)
                 passed += 1 if ok else 0
                 total += 1
     return passed, total

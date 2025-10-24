@@ -79,6 +79,11 @@ def clean_code_block(text: str) -> str:
     return s
 
 
+def parse_first_def_name(text: str) -> str | None:
+    m = re.search(r"^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", text, re.MULTILINE)
+    return m.group(1) if m else None
+
+
 def load_model_and_tokenizer(model_path: str, device: torch.device):
     tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
     if tok.pad_token is None:
@@ -135,6 +140,8 @@ def evaluate_mbpp_with_model(
             attention_mask = batch["attention_mask"].to(device)
             tests_list = batch["test_list"]
             setup_codes = batch["test_setup_code"]
+            imports_codes = batch.get("test_imports", [""] * len(setup_codes))
+            ref_codes = batch.get("reference_code", [""] * len(setup_codes))
             prompts = batch["prompts"]
 
             gen_ids = model.generate(
@@ -147,9 +154,19 @@ def evaluate_mbpp_with_model(
             )
             gen_texts = tokenizer.batch_decode(gen_ids[:, input_ids.shape[1]:], skip_special_tokens=True)
 
-            for prompt, gen, tests, setup in zip(prompts, gen_texts, tests_list, setup_codes):
+            for prompt, gen, tests, setup, imports_code, ref_code in zip(
+                prompts, gen_texts, tests_list, setup_codes, imports_codes, ref_codes
+            ):
                 code = clean_code_block(gen)
-                ok = safe_execute_code(code, tests, setup)
+                # Function name aliasing
+                expected_name = parse_first_def_name(ref_code or "")
+                gen_name = parse_first_def_name(code)
+                alias_line = ""
+                if expected_name and gen_name and expected_name != gen_name:
+                    alias_line = f"{expected_name} = {gen_name}"
+                # Combine imports + setup + alias
+                combined_setup = "\n".join([x for x in [imports_code or "", setup or "", alias_line] if x])
+                ok = safe_execute_code(code, tests, combined_setup)
                 passed += 1 if ok else 0
                 total += 1
                 if return_details:
@@ -158,6 +175,8 @@ def evaluate_mbpp_with_model(
                             "prompt": prompt,
                             "generated": gen,
                             "cleaned": code,
+                            "expected_name": expected_name,
+                            "generated_name": gen_name,
                             "passed": ok,
                         })
 
