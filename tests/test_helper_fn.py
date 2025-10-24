@@ -1,3 +1,6 @@
+import random
+import numpy as np
+
 import torch
 import pytest
 import jax
@@ -9,9 +12,9 @@ from helper_fn import (
 )
 
 try:
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoModel, AutoTokenizer, AutoModelForMaskedLM
 except ImportError:
-    AutoModel = AutoTokenizer = None
+    AutoModel = AutoTokenizer = AutoModelForMaskedLM = None
 
 
 def _version_tuple(version_str: str) -> tuple[int, int, int]:
@@ -236,6 +239,66 @@ def test_toy_model_roundtrip_through_jax_flattening() -> None:
         torch.testing.assert_close(
             reconstructed_tensor, original_tensor, rtol=1e-3, atol=1e-3
         )
+
+
+@pytest.mark.skipif(
+    AutoModelForMaskedLM is None,
+    reason="transformers masked LM is required for this test",
+)
+def test_bert_overflow_roundtrip_preserves_masked_prediction_text() -> None:
+    if _version_tuple(torch.__version__) < (2, 6, 0):
+        pytest.skip("Torch >= 2.6.0 required to load these checkpoints safely.")
+
+    torch.manual_seed(0)
+    random.seed(0)
+    np.random.seed(0)
+
+    try:
+        original_model = AutoModelForMaskedLM.from_pretrained(
+            "models/BERTOverflow"
+        ).eval()
+        tokenizer = AutoTokenizer.from_pretrained("models/BERTOverflow")
+    except OSError as exc:
+        pytest.skip(f"Required models not available locally: {exc}")
+
+    flat_params, param_shapes, _ = pytorch_to_jax_flattened(original_model)
+
+    try:
+        skeleton_model = AutoModelForMaskedLM.from_pretrained(
+            "models/BERTOverflow"
+        ).eval()
+    except OSError as exc:
+        pytest.skip(f"Required models not available locally: {exc}")
+
+    with torch.no_grad():
+        for param in skeleton_model.parameters():
+            param.zero_()
+
+    reconstructed_model = jax_flattened_to_pytorch_model(
+        flat_params, skeleton_model, param_shapes
+    )
+
+    prompt = "The quick brown fox [MASK] over the lazy dog."
+    encoded = tokenizer(prompt, return_tensors="pt")
+
+    def _fill_mask(model: torch.nn.Module) -> str:
+        with torch.no_grad():
+            logits = model(**encoded).logits
+        mask_positions = (encoded["input_ids"][0] == tokenizer.mask_token_id).nonzero(
+            as_tuple=True
+        )[0]
+        if mask_positions.numel() != 1:
+            raise AssertionError("Expected exactly one [MASK] token in the prompt.")
+        mask_index = mask_positions.item()
+        predicted_id = logits[0, mask_index].argmax(dim=-1).item()
+        filled_ids = encoded["input_ids"].clone()
+        filled_ids[0, mask_index] = predicted_id
+        return tokenizer.decode(filled_ids[0], skip_special_tokens=True)
+
+    original_text = _fill_mask(original_model)
+    reconstructed_text = _fill_mask(reconstructed_model)
+
+    assert reconstructed_text == original_text
 
 
 @pytest.mark.skipif(AutoModel is None, reason="transformers is required for this test")
