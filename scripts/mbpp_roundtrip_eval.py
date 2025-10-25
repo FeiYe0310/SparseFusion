@@ -120,6 +120,7 @@ def evaluate_mbpp_with_model(
     use_three_shot: bool = False,
     few_shot_k: int = 3,
     few_shot_split: str = "train",
+    use_qwen_chat: bool = False,
 ) -> dict:
     ds = MBPPDataset(mbpp_path, tokenizer)
     if subset is not None and subset < len(ds):
@@ -162,6 +163,32 @@ def evaluate_mbpp_with_model(
         parts.append(f"### Task\nProblem: {cur_prompt}\nSolution:")
         return "\n\n".join(parts)
 
+    def build_qwen_chat_messages(cur_prompt: str, expected_name: str | None) -> list[dict]:
+        messages: list[dict] = []
+        # System instruction: strict output only function body
+        system_text = (
+            "You are a helpful coding assistant. Return ONLY valid Python function code. "
+            "Do not include explanations, code fences, examples, or main blocks. "
+            "If a specific function name is required, you MUST use that name."
+        )
+        messages.append({"role": "system", "content": system_text})
+
+        if exemplar_pool:
+            rng = random.Random(0)
+            examples = rng.sample(exemplar_pool, k=min(few_shot_k, len(exemplar_pool)))
+            for ex in examples:
+                ex_p = ex.get("prompt", "")
+                ex_c = ex.get("code", "")
+                messages.append({"role": "user", "content": f"Problem: {ex_p}\nReturn only the function implementation."})
+                messages.append({"role": "assistant", "content": ex_c})
+
+        # Current task
+        requirement = "Return only the function implementation."
+        if expected_name:
+            requirement += f" Function name MUST be `{expected_name}`."
+        messages.append({"role": "user", "content": f"Problem: {cur_prompt}\n{requirement}"})
+        return messages
+
 
     passed = 0
     total = 0
@@ -169,16 +196,18 @@ def evaluate_mbpp_with_model(
 
     with torch.no_grad():
         for batch in loader:
-            # Optionally rebuild inputs with few-shot prompts
-            if use_three_shot and few_shot_k > 0:
-                fs_prompts = [build_few_shot_prompt(p) for p in batch["prompts"]]
-                enc = tokenizer(
-                    fs_prompts,
-                    padding=True,
-                    truncation=True,
-                    max_length=512,
-                    return_tensors="pt",
-                )
+            # Optionally rebuild inputs with few-shot prompts or Qwen chat template
+            if (use_three_shot and few_shot_k > 0) or use_qwen_chat:
+                texts: list[str] = []
+                for p, ref in zip(batch["prompts"], ref_codes):
+                    expected = parse_first_def_name(ref or "")
+                    if use_qwen_chat and hasattr(tokenizer, "apply_chat_template"):
+                        msgs = build_qwen_chat_messages(p, expected)
+                        text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+                    else:
+                        text = build_few_shot_prompt(p) if (use_three_shot and few_shot_k > 0) else p
+                    texts.append(text)
+                enc = tokenizer(texts, padding=True, truncation=True, max_length=1024, return_tensors="pt")
                 input_ids = enc["input_ids"].to(device)
                 attention_mask = enc["attention_mask"].to(device)
             else:
@@ -240,6 +269,7 @@ def main():
     parser.add_argument("--three_shot", action="store_true", help="Enable 3-shot (few-shot) prompts for MBPP")
     parser.add_argument("--few_shot_k", type=int, default=3, help="Number of exemplars for few-shot prompts")
     parser.add_argument("--few_shot_split", type=str, default="train", help="Split to sample exemplars from (train/validation/test)")
+    parser.add_argument("--qwen_chat", action="store_true", help="Use Qwen chat template for prompts (recommended for Qwen)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -254,6 +284,7 @@ def main():
         return_details=(args.print_n > 0 or args.dump_path is not None),
         max_details=(args.print_n if args.print_n > 0 else None),
         use_three_shot=args.three_shot, few_shot_k=args.few_shot_k, few_shot_split=args.few_shot_split,
+        use_qwen_chat=args.qwen_chat,
     )
     print(json.dumps({k: (v if k != "samples" else (v[:args.print_n] if args.print_n > 0 else [])) for k, v in baseline.items()}, ensure_ascii=False, indent=2))
 
@@ -276,6 +307,7 @@ def main():
         return_details=(args.print_n > 0 or args.dump_path is not None),
         max_details=(args.print_n if args.print_n > 0 else None),
         use_three_shot=args.three_shot, few_shot_k=args.few_shot_k, few_shot_split=args.few_shot_split,
+        use_qwen_chat=args.qwen_chat,
     )
     print(json.dumps({k: (v if k != "samples" else (v[:args.print_n] if args.print_n > 0 else [])) for k, v in roundtrip.items()}, ensure_ascii=False, indent=2))
 
