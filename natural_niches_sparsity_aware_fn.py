@@ -1639,39 +1639,52 @@ def run_natural_niches_sparsity_aware(
                                 archive, async_coordinator
                             )
 
-                    # Append per-iteration evolution metrics to a single JSONL (every step)
-                    if is_main_process:
-                        try:
-                            # Compute lightweight scalar metrics for plotting
-                            archive_fitness_vals = jnp.mean(scores, axis=1)
-                            archive_total_scores = compute_total_scores(
-                                archive, scores, omega, beta, tau, alpha, num_tasks, epsilon
-                            )
-                            record = {
-                                "iteration": int(i + 1),
-                                "run": int(run + 1),
-                                "pop_size": int(pop_size),
-                                "eval_subset_size": int(eval_subset_size) if eval_subset_size is not None else None,
-                                "omega": float(omega),
-                                "beta": float(beta),
-                                "tau": float(tau),
-                                "child_mean": float(jnp.mean(score)),
-                                "archive_fitness_mean": float(jnp.mean(archive_fitness_vals)),
-                                "archive_fitness_max": float(jnp.max(archive_fitness_vals)),
-                                "archive_total_mean": float(jnp.mean(archive_total_scores)),
-                                "archive_total_max": float(jnp.max(archive_total_scores)),
-                                "parent_indices": [int(p1_idx), int(p2_idx)],
-                            }
-                            log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
-                            os.makedirs(log_dir, exist_ok=True)
-                            jsonl_path = os.path.join(log_dir, f"evolution_run{run+1}.jsonl")
-                            with open(jsonl_path, "a", encoding="utf-8") as f:
-                                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
-
                     # Record iteration statistics (every 10 steps to reduce overhead)
                     if (i + 1) % 10 == 0:
+                        # Append per-10-steps evolution metrics to a single JSONL (file named by key params, no run)
+                        if is_main_process:
+                            try:
+                                archive_fitness_vals = jnp.mean(scores, axis=1)
+                                archive_total_scores = compute_total_scores(
+                                    archive, scores, omega, beta, tau, alpha, num_tasks, epsilon
+                                )
+                                record = {
+                                    "iteration": int(i + 1),
+                                    "pop_size": int(pop_size),
+                                    "eval_subset_size": int(eval_subset_size) if eval_subset_size is not None else None,
+                                    "omega": float(omega),
+                                    "beta": float(beta),
+                                    "tau": float(tau),
+                                    "child_mean": float(jnp.mean(score)),
+                                    "archive_fitness_mean": float(jnp.mean(archive_fitness_vals)),
+                                    "archive_fitness_max": float(jnp.max(archive_fitness_vals)),
+                                    "archive_total_mean": float(jnp.mean(archive_total_scores)),
+                                    "archive_total_max": float(jnp.max(archive_total_scores)),
+                                    "parent_indices": [int(p1_idx), int(p2_idx)],
+                                }
+                                log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
+                                os.makedirs(log_dir, exist_ok=True)
+                                subset_tag = (
+                                    f"subset{eval_subset_size}" if eval_subset_size is not None else "subsetAll"
+                                )
+                                tags = [
+                                    f"evolution_pop{pop_size}",
+                                    subset_tag,
+                                    f"w{omega:.2f}_b{beta:.2f}",
+                                    f"gw{gsm8k_weight:.2f}_mw{mbpp_weight:.2f}",
+                                ]
+                                if use_dynamic_sparsity:
+                                    tags.append(
+                                        f"dyn{sparsity_min:.2f}-{sparsity_max:.2f}_t0{sparsity_t0}_tm{sparsity_t_mult}"
+                                    )
+                                elif pruning_sparsity > 0:
+                                    tags.append(f"prune_{pruning_method}_{pruning_sparsity:.2f}")
+                                jsonl_name = "_".join(tags) + ".jsonl"
+                                jsonl_path = os.path.join(log_dir, jsonl_name)
+                                with open(jsonl_path, "a", encoding="utf-8") as f:
+                                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                            except Exception:
+                                pass
                         # Compute all archive statistics efficiently
                         archive_fitness_vals = jnp.mean(scores, axis=1)
                         archive_sparsity_vals = jnp.array(
