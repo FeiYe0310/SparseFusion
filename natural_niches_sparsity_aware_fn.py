@@ -1085,16 +1085,16 @@ def run_natural_niches_sparsity_aware(
 
         return model_inputs
 
-    # 训练集：前200个样本（快速实验）；测试集：前50个样本（快速评估）
+    # 使用全量训练/测试集；迭代加速由 eval_subset_size 控制采样
     tokenized_train_dataset = (
-        dataset["train"]
-        .select(range(200))
-        .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
+        dataset["train"].map(
+            preprocess_function, batched=True, remove_columns=["question", "answer"]
+        )
     )
     tokenized_test_dataset = (
-        dataset["test"]
-        .select(range(50))
-        .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
+        dataset["test"].map(
+            preprocess_function, batched=True, remove_columns=["question", "answer"]
+        )
     )
 
     # Few-shot池：用于GSM8K Qwen聊天模板的示例采样
