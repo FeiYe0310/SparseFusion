@@ -10,6 +10,10 @@ set -euo pipefail
 ROOTPATH=${ROOTPATH:-/mnt/shared-storage-user/yefei}
 cd "$ROOTPATH/SparseFusion"
 
+# 必要环境（按你要求仅内置这两项；可通过外部覆盖）
+export USE_SINGLE_PROCESS_SHARDING=${USE_SINGLE_PROCESS_SHARDING:-1}
+export DISABLE_TOKENIZER_MERGE=${DISABLE_TOKENIZER_MERGE:-1}
+
 export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 export HF_HOME=${HF_HOME:-$ROOTPATH/cache}
 export WANDB_CACHE_DIR=${WANDB_CACHE_DIR:-$ROOTPATH/cache}
