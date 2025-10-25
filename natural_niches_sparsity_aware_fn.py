@@ -1713,9 +1713,29 @@ def run_natural_niches_sparsity_aware(
                 if dist_enabled:
                     dist.barrier()
 
-                # --- Periodic Full Archive Reporting: print fitness instead of GSM8K accuracy ---
+                # --- Periodic Full Archive Reporting every 10 steps ---
                 if (i + 1) % 10 == 0:
-                    if is_main_process:
+                    # 10步：在test子集上评估当前child（仅日志用途，不参与选择）
+                    if 'test_eval_fn' in locals() and test_eval_fn is not None and is_main_process:
+                        try:
+                            test_scores = test_eval_fn(child_bf16)
+                            avg_test = float(jnp.mean(test_scores)) if len(test_scores) > 0 else 0.0
+                            test_log_dir = os.path.join(RESULTS_DIR, "test_eval_logs")
+                            os.makedirs(test_log_dir, exist_ok=True)
+                            import json
+                            with open(os.path.join(test_log_dir, f"test_run{run+1}_step{i+1}.json"), "w") as f:
+                                json.dump({
+                                    "run": run + 1,
+                                    "step": i + 1,
+                                    "avg_test_fitness": avg_test,
+                                    "num_test_samples": int(len(test_scores)),
+                                }, f)
+                            if os.environ.get("VERBOSE_EVAL", "0") == "1":
+                                print(f"[Test Eval] step {i+1}: avg_test_fitness={avg_test:.4f} on GSM8K test subset")
+                        except Exception:
+                            pass
+
+                    if is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
                         print(
                             f"\n--- [Step {i+1}/{total_forward_passes}] Archive fitness snapshot ---"
                         )
