@@ -1656,6 +1656,35 @@ def run_natural_niches_sparsity_aware(
                         }
                         results[run]["iterations"].append(iteration_stats)
 
+                        # 按步持久化完整fitness记录到独立文件（每10步）
+                        try:
+                            log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
+                            os.makedirs(log_dir, exist_ok=True)
+                            # 归一化后的archive fitness（当前scores矩阵）
+                            fitness_vector = compute_normalized_fitness(
+                                scores, alpha, num_tasks
+                            )
+                            log_path = os.path.join(
+                                log_dir, f"fitness_run{run+1}_step{i+1}.npz"
+                            )
+                            np.savez(
+                                log_path,
+                                iteration=i + 1,
+                                run=run + 1,
+                                parent_indices=np.array([int(p1_idx), int(p2_idx)], dtype=np.int32),
+                                child_scores=np.array(score, dtype=np.float32),
+                                archive_fitness_normalized=np.array(
+                                    fitness_vector, dtype=np.float32
+                                ),
+                                archive_total_scores=np.array(
+                                    archive_total_scores, dtype=np.float32
+                                ),
+                                archive_scores=np.array(scores, dtype=np.float32),
+                            )
+                        except Exception as _e:
+                            # 安全失败，不中断主流程
+                            pass
+
                 # --- GPU Memory Cleanup (Every 100 steps to prevent memory leak) ---
                 if (i + 1) % 100 == 0:
                     if is_main_process:
