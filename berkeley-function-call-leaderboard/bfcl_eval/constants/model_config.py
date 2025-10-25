@@ -1681,6 +1681,18 @@ local_inference_model_map = {
         output_price=0,
         is_fc_model=True,
         underscore_to_dot=True,
+    ),
+    "Qwen2.5-Coder-0.5B-Instruct-FC": ModelConfig(
+        model_name="Qwen2.5-Coder-0.5B-Instruct-FC",
+        display_name="Qwen2.5-Coder-0.5B-Instruct (FC)",
+        url="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct",
+        org="Qwen",
+        license="apache-2.0",
+        model_handler=QwenFCHandler,
+        input_price=0,
+        output_price=0,
+        is_fc_model=True,
+        underscore_to_dot=False,
     ), 
     "Team-ACE/ToolACE-2-8B": ModelConfig(
         model_name="Team-ACE/ToolACE-2-8B",

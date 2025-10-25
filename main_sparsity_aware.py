@@ -87,6 +87,13 @@ def parse_arguments():
                         help="Path to MBPP test dataset or HF identifier")
     parser.add_argument("--mbpp_weight", type=float, default=0.33,
                         help="Weight for MBPP task in multi-task learning")
+    # Qwen 3-shot chat template for MBPP
+    parser.add_argument("--mbpp_qwen_chat", action="store_true",
+                        help="Use Qwen chat template for MBPP prompts (3-shot style)")
+    parser.add_argument("--mbpp_few_shot_k", type=int, default=3,
+                        help="Few-shot exemplars used in MBPP prompts when --mbpp_qwen_chat is set")
+    parser.add_argument("--mbpp_few_shot_split", type=str, default="train",
+                        help="Split to sample MBPP exemplars from when using --mbpp_qwen_chat")
     
     # DoT: 4x4 / 5x5 Multiplication & Boolean Logic (optional)
     parser.add_argument("--use_mult4_eval", action="store_true",
@@ -209,6 +216,9 @@ def main():
         use_mbpp_eval=args.use_mbpp_eval,  # 🎯 MBPP评估
         mbpp_data_path=args.mbpp_data_path,
         mbpp_weight=args.mbpp_weight,
+        mbpp_qwen_chat=args.mbpp_qwen_chat,
+        mbpp_few_shot_k=args.mbpp_few_shot_k,
+        mbpp_few_shot_split=args.mbpp_few_shot_split,
         # DoT tasks
         use_mult4_eval=args.use_mult4_eval,
         use_mult5_eval=args.use_mult5_eval,
