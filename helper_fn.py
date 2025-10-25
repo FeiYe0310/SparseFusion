@@ -262,10 +262,12 @@ def _load_model(
     """Loads a model onto a specified device."""
     try:
         return AutoModelForCausalLM.from_pretrained(
-            model_path, torch_dtype=dtype
+            model_path, torch_dtype=dtype, trust_remote_code=True
         ).to(device)
     except Exception:
-        return AutoModel.from_pretrained(model_path, torch_dtype=dtype).to(device)
+        return AutoModel.from_pretrained(
+            model_path, torch_dtype=dtype, trust_remote_code=True
+        ).to(device)
 
 
 def get_pre_trained_models_and_skeleton(
@@ -305,8 +307,19 @@ def get_pre_trained_models_and_skeleton(
     model1.eval()
     model2.eval()
 
-    tokenizer1 = AutoTokenizer.from_pretrained(model1_path)
-    tokenizer2 = AutoTokenizer.from_pretrained(model2_path)
+    tokenizer1 = AutoTokenizer.from_pretrained(
+        model1_path, trust_remote_code=True, use_fast=False
+    )
+    tokenizer2 = AutoTokenizer.from_pretrained(
+        model2_path, trust_remote_code=True, use_fast=False
+    )
+
+    # Ensure left padding for decoder-only models
+    try:
+        tokenizer1.padding_side = "left"
+        tokenizer2.padding_side = "left"
+    except Exception:
+        pass
 
     base_choice = base_tokenizer.lower()
     if base_choice not in {"model1", "model2"}:
