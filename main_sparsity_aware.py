@@ -94,6 +94,13 @@ def parse_arguments():
                         help="Few-shot exemplars used in MBPP prompts when --mbpp_qwen_chat is set")
     parser.add_argument("--mbpp_few_shot_split", type=str, default="train",
                         help="Split to sample MBPP exemplars from when using --mbpp_qwen_chat")
+    # Qwen 3-shot chat template for GSM8K
+    parser.add_argument("--gsm8k_qwen_chat", action="store_true",
+                        help="Use Qwen chat template for GSM8K prompts (3-shot style)")
+    parser.add_argument("--gsm8k_few_shot_k", type=int, default=3,
+                        help="Few-shot exemplars used in GSM8K prompts when --gsm8k_qwen_chat is set")
+    parser.add_argument("--gsm8k_few_shot_split", type=str, default="train",
+                        help="Split to sample GSM8K exemplars from when using --gsm8k_qwen_chat")
     
     # DoT: 4x4 / 5x5 Multiplication & Boolean Logic (optional)
     parser.add_argument("--use_mult4_eval", action="store_true",
@@ -219,6 +226,9 @@ def main():
         mbpp_qwen_chat=args.mbpp_qwen_chat,
         mbpp_few_shot_k=args.mbpp_few_shot_k,
         mbpp_few_shot_split=args.mbpp_few_shot_split,
+        gsm8k_qwen_chat=args.gsm8k_qwen_chat,
+        gsm8k_few_shot_k=args.gsm8k_few_shot_k,
+        gsm8k_few_shot_split=args.gsm8k_few_shot_split,
         # DoT tasks
         use_mult4_eval=args.use_mult4_eval,
         use_mult5_eval=args.use_mult5_eval,

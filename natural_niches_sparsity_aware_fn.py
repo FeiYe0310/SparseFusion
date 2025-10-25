@@ -536,6 +536,9 @@ def create_evaluation_fn_for_llm(
     rank: int = 0,
     eval_subset_size: int = None,  # 每轮评估的样本数（None=使用全部数据）
     return_subset_only: bool = False,  # 多任务评估时设为True，不扩展到完整数据集
+    gsm8k_qwen_chat: bool = False,
+    gsm8k_few_shot_k: int = 3,
+    gsm8k_few_shot_dataset=None,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """
     Creates an evaluation function for GSM8K using **generation + exact match**.
@@ -571,11 +574,13 @@ def create_evaluation_fn_for_llm(
             [torch.tensor(item["attention_mask"]) for item in batch]
         )
         answer_texts = [item["answer_text"] for item in batch]
+        questions = [item.get("question", "") for item in batch]
 
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "answer_text": answer_texts,
+            "question": questions,
         }
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
@@ -635,7 +640,55 @@ def create_evaluation_fn_for_llm(
         local_scores = []
         with torch.no_grad():
             for batch in data_loader:
-                input_ids = batch["input_ids"].to(device)
+                # 若启用Qwen聊天模板，则基于question重建输入
+                if gsm8k_qwen_chat and hasattr(tokenizer, "apply_chat_template"):
+                    qs = batch.get("question", [""] * len(batch["answer_text"]))
+                    texts = []
+                    import random as _random
+
+                    # 预取few-shot池中的(question, answer)对
+                    few_qas = []
+                    if gsm8k_few_shot_dataset is not None:
+                        # 假设字段名为 'question' 和 'answer'
+                        few_qs = gsm8k_few_shot_dataset["question"]
+                        few_as = gsm8k_few_shot_dataset["answer"]
+                        few_qas = list(zip(few_qs, few_as))
+
+                    def build_msgs(q: str, exemplars: list[tuple[str, str]]):
+                        system_text = (
+                            "You are a helpful math problem solver. "
+                            "Answer with concise reasoning and put the final numeric answer on the last line as '#### <number>'."
+                        )
+                        msgs = [{"role": "system", "content": system_text}]
+                        for ex_q, ex_a in exemplars:
+                            msgs.append({"role": "user", "content": ex_q})
+                            msgs.append({"role": "assistant", "content": ex_a})
+                        msgs.append({"role": "user", "content": q})
+                        return msgs
+
+                    for idx, q in enumerate(qs):
+                        k = max(0, int(gsm8k_few_shot_k))
+                        exemplars = []
+                        if few_qas and k > 0:
+                            rnd = _random.Random((iteration_counter["count"] + idx) * 1315423911)
+                            exemplars = rnd.sample(few_qas, min(k, len(few_qas)))
+                        msgs = build_msgs(q, exemplars)
+                        text = tokenizer.apply_chat_template(
+                            msgs, tokenize=False, add_generation_prompt=True
+                        )
+                        texts.append(text)
+
+                    enc = tokenizer(
+                        texts,
+                        padding=True,
+                        truncation=True,
+                        max_length=1024,
+                        return_tensors="pt",
+                    )
+                    input_ids = enc["input_ids"].to(device)
+                    attention_mask = enc["attention_mask"].to(device)
+                else:
+                    input_ids = batch["input_ids"].to(device)
                 # 原始答案文本（用于提取ground truth）
                 answer_texts = batch["answer_text"]
 
@@ -874,6 +927,10 @@ def run_natural_niches_sparsity_aware(
     bfcl_data_path: str = "bfcl/data/bfcl_test_200.json",  # BFCL数据路径
     gsm8k_weight: float = 0.5,  # GSM8K任务权重
     bfcl_weight: float = 0.5,  # BFCL任务权重
+    # GSM8K Qwen few-shot
+    gsm8k_qwen_chat: bool = False,
+    gsm8k_few_shot_k: int = 3,
+    gsm8k_few_shot_split: str = "train",
     # 🎯 MBPP: MBPP代码生成评估
     use_mbpp_eval: bool = False,  # 是否启用MBPP评估
     mbpp_data_path: str = "mbpp/data/mbpp_test.json",  # MBPP数据路径
@@ -1018,6 +1075,8 @@ def run_natural_niches_sparsity_aware(
 
         # 保存原始答案文本（不tokenize，后续直接用于提取答案）
         model_inputs["answer_text"] = examples["answer"]
+        # 也保留原始问题文本（用于Qwen聊天模板重建prompt）
+        model_inputs["question"] = questions
 
         return model_inputs
 
@@ -1032,6 +1091,10 @@ def run_natural_niches_sparsity_aware(
         .select(range(50))
         .map(preprocess_function, batched=True, remove_columns=["question", "answer"])
     )
+
+    # Few-shot池：用于GSM8K Qwen聊天模板的示例采样
+    fewshot_split = gsm8k_few_shot_split if gsm8k_few_shot_split in dataset else "train"
+    gsm8k_fewshot_pool = dataset[fewshot_split].select(range(200)).to_dict()  # 包含question/answer
     # 不使用set_format，保持原始格式
     # DataLoader会自动将input_ids等转为tensor，answer_text保持为字符串列表
 
@@ -1154,6 +1217,9 @@ def run_natural_niches_sparsity_aware(
             use_mult4_eval=use_mult4_eval,
             use_mult5_eval=use_mult5_eval,
             use_bool_eval=use_bool_eval,
+            gsm8k_qwen_chat=gsm8k_qwen_chat,
+            gsm8k_few_shot_k=gsm8k_few_shot_k,
+            gsm8k_few_shot_dataset=gsm8k_fewshot_pool,
         )
 
         # Test evaluation: GSM8K only (for compatibility)
@@ -1166,6 +1232,9 @@ def run_natural_niches_sparsity_aware(
             world_size=world_size,
             rank=rank,
             eval_subset_size=None,
+            gsm8k_qwen_chat=gsm8k_qwen_chat,
+            gsm8k_few_shot_k=gsm8k_few_shot_k,
+            gsm8k_few_shot_dataset=gsm8k_fewshot_pool,
         )
 
         # Update num_tasks for competitive normalization
@@ -1216,6 +1285,9 @@ def run_natural_niches_sparsity_aware(
             world_size=world_size,
             rank=rank,
             eval_subset_size=eval_subset_size,
+            gsm8k_qwen_chat=gsm8k_qwen_chat,
+            gsm8k_few_shot_k=gsm8k_few_shot_k,
+            gsm8k_few_shot_dataset=gsm8k_fewshot_pool,
         )
         test_eval_fn = create_evaluation_fn_for_llm(
             model_skeleton,
@@ -1226,6 +1298,9 @@ def run_natural_niches_sparsity_aware(
             world_size=world_size,
             rank=rank,
             eval_subset_size=None,
+            gsm8k_qwen_chat=gsm8k_qwen_chat,
+            gsm8k_few_shot_k=gsm8k_few_shot_k,
+            gsm8k_few_shot_dataset=gsm8k_fewshot_pool,
         )
 
         # num_tasks已经在前面设置为len(tokenized_train_dataset)
@@ -2118,6 +2193,9 @@ def create_multi_task_evaluation_fn(
     use_mult4_eval: bool = False,
     use_mult5_eval: bool = False,
     use_bool_eval: bool = False,
+    gsm8k_qwen_chat: bool = False,
+    gsm8k_few_shot_k: int = 3,
+    gsm8k_few_shot_dataset=None,
 ):
     """
     创建多任务评估函数：同时评估GSM8K和BFCL
@@ -2150,6 +2228,9 @@ def create_multi_task_evaluation_fn(
         rank=rank,
         eval_subset_size=eval_subset_size,
         return_subset_only=True,  # 多任务：不扩展，直接返回子集分数
+        gsm8k_qwen_chat=gsm8k_qwen_chat,
+        gsm8k_few_shot_k=gsm8k_few_shot_k,
+        gsm8k_few_shot_dataset=gsm8k_few_shot_dataset,
     )
     
     # 创建BFCL评估函数（仅当提供了数据集）
