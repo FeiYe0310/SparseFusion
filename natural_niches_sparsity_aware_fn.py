@@ -780,7 +780,7 @@ def sample_parents_with_sparsity(
     tau: float,
     use_matchmaker: bool,
     epsilon: float,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, int, int]:
     """
     选择父代（基于Total Score = ω×Fitness + β×Sparsity）
 
@@ -831,8 +831,8 @@ def sample_parents_with_sparsity(
         parent_2_idx, parent_1_idx = jax.random.choice(
             k1, probs.size, shape=(2,), p=probs
         )
-
-    return archive[parent_1_idx], archive[parent_2_idx]
+    # 返回父代参数以及其索引，便于记录谱系
+    return archive[parent_1_idx], archive[parent_2_idx], int(parent_1_idx), int(parent_2_idx)
 
 
 # ==============================================================================
@@ -1483,6 +1483,8 @@ def run_natural_niches_sparsity_aware(
                         use_matchmaker,
                         epsilon,
                     )
+                    p1_idx = parents_bf16[2]
+                    p2_idx = parents_bf16[3]
                     parents_f32 = (
                         parents_bf16[0].astype(jnp.float32),
                         parents_bf16[1].astype(jnp.float32),
@@ -1633,6 +1635,8 @@ def run_natural_niches_sparsity_aware(
                             "child_sparsity": float(
                                 compute_sparsity(child_bf16, epsilon)
                             ),
+                            "parent_indices": [int(p1_idx), int(p2_idx)],
+                            "fitness_vector": [float(x) for x in jnp.array(score)],
                             "archive_fitness_mean": float(
                                 jnp.mean(archive_fitness_vals)
                             ),
@@ -1705,8 +1709,8 @@ def run_natural_niches_sparsity_aware(
                                 }
                             )
 
-                # --- Periodic Checkpoint Save (Every 50 steps to prevent data loss) ---
-                if (i + 1) % 1000 == 0 and is_main_process:
+                # --- Periodic Checkpoint Save (Every 2500 steps) ---
+                if (i + 1) % 2500 == 0 and is_main_process:
                     from datetime import datetime
 
                     checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
