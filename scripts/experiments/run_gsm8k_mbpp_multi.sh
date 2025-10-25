@@ -40,15 +40,6 @@ FEW_SHOT_SPLIT=${FEW_SHOT_SPLIT:-train}
 GSM8K_WEIGHT=${GSM8K_WEIGHT:-0.5}
 MBPP_WEIGHT=${MBPP_WEIGHT:-0.5}
 
-#########################
-# Required: population size
-#########################
-POP_SIZE=${POP_SIZE:-}
-if [[ -z "${POP_SIZE}" ]]; then
-  echo "[Launcher] Please set POP_SIZE (e.g., POP_SIZE=12)" >&2
-  exit 2
-fi
-
 # Evolution scale
 RUNS=${RUNS:-1}
 TOTAL_FP=${TOTAL_FP:-5000}
@@ -90,7 +81,7 @@ if [[ -n "${SPARSITY_MAX:-}" ]]; then COMMON_ARGS+=(--sparsity_max "$SPARSITY_MA
 if [[ -n "${SPARSITY_T0:-}" ]]; then COMMON_ARGS+=(--sparsity_t0 "$SPARSITY_T0"); fi
 if [[ -n "${SPARSITY_T_MULT:-}" ]]; then COMMON_ARGS+=(--sparsity_t_mult "$SPARSITY_T_MULT"); fi
 
-echo "[Launcher] GPUS_PER_NODE=${GPUS_PER_NODE} | ARCHIVE_BACKEND=${ARCHIVE_BACKEND} | JAX_SHARD=${USE_SINGLE_PROCESS_SHARDING} | POP_SIZE=${POP_SIZE}" >&2
+echo "[Launcher] GPUS_PER_NODE=${GPUS_PER_NODE} | ARCHIVE_BACKEND=${ARCHIVE_BACKEND} | JAX_SHARD=${USE_SINGLE_PROCESS_SHARDING}" >&2
 
 if (( GPUS_PER_NODE > 1 )); then
   if [[ "$USE_SINGLE_PROCESS_SHARDING" != "0" ]]; then
@@ -98,7 +89,6 @@ if (( GPUS_PER_NODE > 1 )); then
     JAX_PLATFORM_NAME=cpu \
     python main_sparsity_aware.py \
       --archive_backend "$ARCHIVE_BACKEND" \
-      --pop_size "$POP_SIZE" \
       "${COMMON_ARGS[@]}" "$@"
   else
     echo "[Mode] torchrun DDP with ${GPUS_PER_NODE} processes" >&2
@@ -107,14 +97,12 @@ if (( GPUS_PER_NODE > 1 )); then
       main_sparsity_aware.py \
       --distributed \
       --archive_backend "$ARCHIVE_BACKEND" \
-      --pop_size "$POP_SIZE" \
       "${COMMON_ARGS[@]}" "$@"
   fi
 else
   echo "[Mode] Single GPU" >&2
   python main_sparsity_aware.py \
     --archive_backend "$ARCHIVE_BACKEND" \
-    --pop_size "$POP_SIZE" \
     "${COMMON_ARGS[@]}" "$@"
 fi
 
