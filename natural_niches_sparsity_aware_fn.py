@@ -28,6 +28,7 @@ import math
 import sys
 import pickle
 from contextlib import nullcontext
+import os
 import json
 import random
 
@@ -608,7 +609,7 @@ def create_evaluation_fn_for_llm(
             eval_dataset = Subset(tokenized_dataset, indices)
             iteration_counter["count"] += 1
 
-            if rank == 0:
+            if rank == 0 and os.environ.get("VERBOSE_EVAL", "0") == "1":
                 print(
                     f"  [Eval] 使用 {eval_subset_size}/{len(tokenized_dataset)} 样本 (iteration {iteration_counter['count']})"
                 )
@@ -1147,8 +1148,8 @@ def run_natural_niches_sparsity_aware(
         num_tasks = num_tasks * world_size  # 分布式聚合后的总任务数
 
     # --- Evaluation Setup (IDENTICAL TO ORIGINAL) ---
-    if is_main_process:
-        print("Setting up evaluation environment...")
+        if is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
+            print("Setting up evaluation environment...")
     model_skeleton.to(device)
 
     if dist_enabled:
@@ -1168,7 +1169,7 @@ def run_natural_niches_sparsity_aware(
     # ============================================================================
     if (use_bfcl_eval and bfcl_dataset is not None) or (use_mbpp_eval and mbpp_dataset is not None) or (use_mult4_eval or use_mult5_eval or use_bool_eval):
         # Multi-task evaluation: GSM8K + (BFCL) + (MBPP) + (DoT)
-        if is_main_process:
+        if is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
             task_names = ["GSM8K"]
             if bfcl_dataset is not None and use_bfcl_eval:
                 task_names.append("BFCL")
@@ -1277,7 +1278,7 @@ def run_natural_niches_sparsity_aware(
                 num_tasks += default_dot
     else:
         # Single-task evaluation: GSM8K only
-        if is_main_process:
+        if is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
             print("\n📊 Creating GSM8K-only Evaluation")
 
         train_eval_fn = create_evaluation_fn_for_llm(
@@ -1743,7 +1744,7 @@ def run_natural_niches_sparsity_aware(
                             )
 
                 # --- Periodic Checkpoint Save (Every 2500 steps) ---
-                if (i + 1) % 2500 == 0 and is_main_process:
+                if (i + 1) % 2500 == 0 and is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
                     from datetime import datetime
 
                     checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
@@ -2249,15 +2250,15 @@ def create_mbpp_evaluation_fn(
                         is_correct = safe_execute_code(clean_code, tests, merged_setup)
                         all_scores.append(1.0 if is_correct else 0.0)
                         
-                        # 调试：打印前2个样本的输出
-                        if rank == 0 and len(all_scores) <= 2:
+                        # 调试打印（受 VERBOSE_EVAL 控制）
+                        if rank == 0 and os.environ.get("VERBOSE_EVAL", "0") == "1" and len(all_scores) <= 2:
                             print(f"  [MBPP] Sample {len(all_scores)}:")
                             print(f"    Generated: {gen_code[:150]}...")
                             print(f"    Tests: {tests[:3]}")
                             print(f"    Correct: {is_correct}")
                     except Exception as e:
                         all_scores.append(0.0)  # 任何异常都视为失败
-                        if rank == 0 and len(all_scores) <= 2:
+                        if rank == 0 and os.environ.get("VERBOSE_EVAL", "0") == "1" and len(all_scores) <= 2:
                             print(f"  [MBPP] Sample {len(all_scores)}: Exception - {str(e)[:100]}")
         
         # 分布式聚合（与GSM8K/BFCL评估函数保持一致）
@@ -2440,8 +2441,8 @@ def create_multi_task_evaluation_fn(
             task_scores['Boolean'] = float(jnp.mean(bool_scores))
             scores_list.append(bool_scores)
         
-        # 打印任务性能统计
-        if rank == 0:
+        # 打印任务性能统计（受 VERBOSE_EVAL 控制）
+        if rank == 0 and os.environ.get("VERBOSE_EVAL", "0") == "1":
             print(f"\n{'='*70}")
             print(f"📊 任务性能统计")
             print(f"{'='*70}")
