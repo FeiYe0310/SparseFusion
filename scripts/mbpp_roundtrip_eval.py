@@ -196,10 +196,17 @@ def evaluate_mbpp_with_model(
 
     with torch.no_grad():
         for batch in loader:
+            # Gather batch metadata first (needed by prompt builders)
+            tests_list = batch["test_list"]
+            setup_codes = batch["test_setup_code"]
+            imports_codes = batch.get("test_imports", [""] * len(setup_codes))
+            ref_codes = batch.get("reference_code", [""] * len(setup_codes))
+            prompts = batch["prompts"]
+
             # Optionally rebuild inputs with few-shot prompts or Qwen chat template
             if (use_three_shot and few_shot_k > 0) or use_qwen_chat:
                 texts: list[str] = []
-                for p, ref in zip(batch["prompts"], ref_codes):
+                for p, ref in zip(prompts, ref_codes):
                     expected = parse_first_def_name(ref or "")
                     if use_qwen_chat and hasattr(tokenizer, "apply_chat_template"):
                         msgs = build_qwen_chat_messages(p, expected)
@@ -213,11 +220,6 @@ def evaluate_mbpp_with_model(
             else:
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
-            tests_list = batch["test_list"]
-            setup_codes = batch["test_setup_code"]
-            imports_codes = batch.get("test_imports", [""] * len(setup_codes))
-            ref_codes = batch.get("reference_code", [""] * len(setup_codes))
-            prompts = batch["prompts"]
 
             gen_ids = model.generate(
                 input_ids=input_ids,
