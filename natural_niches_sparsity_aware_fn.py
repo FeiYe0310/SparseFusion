@@ -1143,7 +1143,9 @@ def run_natural_niches_sparsity_aware(
             use_mbpp_eval = False
     
     # 初始num_tasks设置（后续会根据是否使用BFCL/MBPP和分布式调整）
-    num_tasks = len(tokenized_train_dataset)
+    # 默认用train；若需在迭代中评估test子集，可在下方替换
+    iter_tokenized_dataset = tokenized_train_dataset
+    num_tasks = len(iter_tokenized_dataset)
     if dist_enabled and world_size > 1:
         num_tasks = num_tasks * world_size  # 分布式聚合后的总任务数
 
@@ -1207,10 +1209,15 @@ def run_natural_niches_sparsity_aware(
         if use_bool_eval:
             task_weights_dict["bool"] = bool_weight
 
+        # 若指定使用test子集进行迭代评估
+        if eval_on_test_subset:
+            iter_tokenized_dataset = tokenized_test_dataset
+            num_tasks = len(iter_tokenized_dataset)
+
         train_eval_fn = create_multi_task_evaluation_fn(
             model_skeleton,
             param_shapes,
-            tokenized_train_dataset,
+            iter_tokenized_dataset,
             bfcl_dataset,
             tokenizer,
             task_weights=task_weights_dict,
@@ -1281,10 +1288,15 @@ def run_natural_niches_sparsity_aware(
         if is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
             print("\n📊 Creating GSM8K-only Evaluation")
 
+        # 若指定使用test子集进行迭代评估
+        if eval_on_test_subset:
+            iter_tokenized_dataset = tokenized_test_dataset
+            num_tasks = len(iter_tokenized_dataset)
+
         train_eval_fn = create_evaluation_fn_for_llm(
             model_skeleton,
             param_shapes,
-            tokenized_train_dataset,
+            iter_tokenized_dataset,
             tokenizer,
             distributed=dist_enabled,
             world_size=world_size,

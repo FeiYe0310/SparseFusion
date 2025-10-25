@@ -67,6 +67,8 @@ def parse_arguments():
     # 🚀 加速参数
     parser.add_argument("--eval_subset_size", type=int, default=None,
                         help="Number of samples to evaluate per iteration (None=all data, 30=sample 30 points per iter for speedup)")
+    parser.add_argument("--eval_on_test_subset", action="store_true",
+                        help="Use test split (subset) for per-iteration evaluation instead of train split")
     
     # 🎯 BFCL多任务评估参数
     parser.add_argument("--use_bfcl_eval", action="store_true",
@@ -216,6 +218,7 @@ def main():
         archive_backend=args.archive_backend,
         log_sparsity_stats=args.log_sparsity_stats,
         eval_subset_size=args.eval_subset_size,  # 🚀 加速参数
+        eval_on_test_subset=args.eval_on_test_subset,
         use_bfcl_eval=args.use_bfcl_eval,  # 🎯 BFCL评估
         bfcl_data_path=args.bfcl_data_path,
         gsm8k_weight=args.gsm8k_weight,
