@@ -19,7 +19,7 @@ export PATH="$ROOTPATH/miniconda3/bin:$PATH"
 export PATH="$ROOTPATH/miniconda3/envs/sparsefusion/bin:$PATH"
 
 # ====== Hardware Config ======
-GPUS_PER_NODE=${GPUS_PER_NODE:-2}
+GPUS_PER_NODE=${GPUS_PER_NODE:-8}
 USE_SINGLE_PROCESS_SHARDING=${USE_SINGLE_PROCESS_SHARDING:-0}
 ARCHIVE_BACKEND=${ARCHIVE_BACKEND:-gpu}
 
@@ -70,6 +70,25 @@ fi
 if (( USE_MBPP_QWEN )); then
   COMMON_ARGS+=(--mbpp_qwen_chat --mbpp_few_shot_k "$FEW_SHOT_K" --mbpp_few_shot_split "$FEW_SHOT_SPLIT")
 fi
+
+# ====== Sparsity / Fitness params (external override via env) ======
+# Alpha/Beta/Others
+if [[ -n "${ALPHA:-}" ]]; then COMMON_ARGS+=(--alpha "$ALPHA"); fi
+if [[ -n "${BETA:-}" ]]; then COMMON_ARGS+=(--beta "$BETA"); fi
+if [[ -n "${OMEGA:-}" ]]; then COMMON_ARGS+=(--omega "$OMEGA"); fi
+if [[ -n "${TAU:-}" ]]; then COMMON_ARGS+=(--tau "$TAU"); fi
+if [[ -n "${EPSILON:-}" ]]; then COMMON_ARGS+=(--epsilon "$EPSILON"); fi
+
+# Pruning
+if [[ -n "${PRUNING_SPARSITY:-}" ]]; then COMMON_ARGS+=(--pruning_sparsity "$PRUNING_SPARSITY"); fi
+if [[ -n "${PRUNING_METHOD:-}" ]]; then COMMON_ARGS+=(--pruning_method "$PRUNING_METHOD"); fi
+
+# Dynamic sparsity schedule
+if [[ -n "${USE_DYNAMIC_SPARSITY:-}" ]]; then COMMON_ARGS+=(--use_dynamic_sparsity); fi
+if [[ -n "${SPARSITY_MIN:-}" ]]; then COMMON_ARGS+=(--sparsity_min "$SPARSITY_MIN"); fi
+if [[ -n "${SPARSITY_MAX:-}" ]]; then COMMON_ARGS+=(--sparsity_max "$SPARSITY_MAX"); fi
+if [[ -n "${SPARSITY_T0:-}" ]]; then COMMON_ARGS+=(--sparsity_t0 "$SPARSITY_T0"); fi
+if [[ -n "${SPARSITY_T_MULT:-}" ]]; then COMMON_ARGS+=(--sparsity_t_mult "$SPARSITY_T_MULT"); fi
 
 echo "[Launcher] GPUS_PER_NODE=${GPUS_PER_NODE} | ARCHIVE_BACKEND=${ARCHIVE_BACKEND} | JAX_SHARD=${USE_SINGLE_PROCESS_SHARDING} | POP_SIZE=${POP_SIZE}" >&2
 
