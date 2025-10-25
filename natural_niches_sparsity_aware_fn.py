@@ -924,6 +924,10 @@ def run_natural_niches_sparsity_aware(
     archive_backend: str = "gpu",
     log_sparsity_stats: bool = False,
     eval_subset_size: int = None,  # 🚀 NEW: 每轮评估的样本数（加速）
+    eval_on_test_subset: bool = False,  # 🚀 NEW: 每轮评估改用test子集
+    eval_subset_size_gsm8k: Optional[int] = None,
+    eval_subset_size_mbpp: Optional[int] = None,
+    test_eval_subset_size: Optional[int] = None,
     use_bfcl_eval: bool = False,  # 🎯 BFCL: 是否启用BFCL多任务评估
     bfcl_data_path: str = "bfcl/data/bfcl_test_200.json",  # BFCL数据路径
     gsm8k_weight: float = 0.5,  # GSM8K任务权重
@@ -1127,19 +1131,22 @@ def run_natural_niches_sparsity_aware(
     # 🎯 MBPP Data Loading (if enabled)
     # ============================================================================
     mbpp_dataset = None
+    mbpp_test_dataset = None
     if use_mbpp_eval:
         if is_main_process:
             print(f"\n🎯 Loading MBPP dataset: {mbpp_data_path}")
         try:
             from mbpp_data_utils import MBPPDataset
-            mbpp_dataset = MBPPDataset(mbpp_data_path, tokenizer)
+            mbpp_dataset = MBPPDataset(mbpp_data_path, tokenizer, split="train")
+            mbpp_test_dataset = MBPPDataset(mbpp_data_path, tokenizer, split="test")
             if is_main_process:
-                print(f"✅ MBPP dataset loaded: {len(mbpp_dataset)} samples")
+                print(f"✅ MBPP train: {len(mbpp_dataset)} | test: {len(mbpp_test_dataset)} samples")
         except Exception as e:
             if is_main_process:
                 print(f"❌ Failed to load MBPP dataset: {e}")
                 print("Continuing without MBPP...")
             mbpp_dataset = None
+            mbpp_test_dataset = None
             use_mbpp_eval = False
     
     # 初始num_tasks设置（后续会根据是否使用BFCL/MBPP和分布式调整）
@@ -1751,6 +1758,52 @@ def run_natural_niches_sparsity_aware(
                                 }, f)
                             if os.environ.get("VERBOSE_EVAL", "0") == "1":
                                 print(f"[Test Eval] step {i+1}: avg_test_fitness={avg_test:.4f} on GSM8K test subset")
+                        except Exception:
+                            pass
+
+                    # MBPP 每10步 test 子集评估
+                    if mbpp_test_dataset is not None and is_main_process:
+                        try:
+                            mbpp_test_eval_fn = create_mbpp_evaluation_fn(
+                                model_skeleton,
+                                param_shapes,
+                                mbpp_test_dataset,
+                                tokenizer,
+                                batch_size=batch_size,
+                                distributed=dist_enabled,
+                                world_size=world_size,
+                                rank=rank,
+                                eval_subset_size=(eval_subset_size_mbpp if eval_subset_size_mbpp is not None else eval_subset_size),
+                                return_subset_only=True,
+                                mbpp_qwen_chat=False,
+                                mbpp_few_shot_k=3,
+                                mbpp_few_shot_dataset=None,
+                            )
+                            mbpp_scores = mbpp_test_eval_fn(child_bf16)
+                            mbpp_avg_test = float(jnp.mean(mbpp_scores)) if len(mbpp_scores) > 0 else 0.0
+                            mbpp_log_dir = os.path.join(RESULTS_DIR, "test_eval_logs")
+                            os.makedirs(mbpp_log_dir, exist_ok=True)
+                            import json
+                            subset_tag_mbpp = (
+                                f"subset{(eval_subset_size_mbpp if eval_subset_size_mbpp is not None else eval_subset_size)}"
+                                if (eval_subset_size_mbpp is not None or eval_subset_size is not None) else "subsetAll"
+                            )
+                            fname_mbpp = (
+                                f"test_mbpp_step{i+1}_pop{pop_size}_{subset_tag_mbpp}_w{omega:.2f}_b{beta:.2f}.json"
+                            )
+                            with open(os.path.join(mbpp_log_dir, fname_mbpp), "w") as f:
+                                json.dump({
+                                    "step": i + 1,
+                                    "avg_test_fitness": mbpp_avg_test,
+                                    "num_test_samples": int(len(mbpp_scores)),
+                                    "pop_size": int(pop_size),
+                                    "eval_subset_size": int(eval_subset_size_mbpp) if eval_subset_size_mbpp is not None else (int(eval_subset_size) if eval_subset_size is not None else None),
+                                    "omega": float(omega),
+                                    "beta": float(beta),
+                                    "tau": float(tau),
+                                }, f)
+                            if os.environ.get("VERBOSE_EVAL", "0") == "1":
+                                print(f"[Test Eval][MBPP] step {i+1}: avg_test_fitness={mbpp_avg_test:.4f}")
                         except Exception:
                             pass
 
