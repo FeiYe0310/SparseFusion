@@ -2035,6 +2035,9 @@ def create_mbpp_evaluation_fn(
     rank: int = 0,
     eval_subset_size: int = None,
     return_subset_only: bool = False,  # 多任务评估时设为True，不进行分布式聚合
+    mbpp_qwen_chat: bool = False,
+    mbpp_few_shot_k: int = 3,
+    mbpp_few_shot_dataset=None,
 ):
     """
     创建MBPP (Mostly Basic Python Problems) 评估函数
@@ -2117,6 +2120,21 @@ def create_mbpp_evaluation_fn(
         except Exception:
             return False  # 任何异常都视为失败
     
+    import re
+
+    def _parse_first_def_name(text: str) -> str:
+        m = re.search(r"^\s*def\s+([a-zA-Z_][\w]*)\s*\(", text, flags=re.M)
+        return m.group(1) if m else ""
+
+    def _clean_code_block(generated: str) -> str:
+        s = generated.strip()
+        fence = re.search(r"```(?:python)?\n([\s\S]*?)```", s, flags=re.I)
+        if fence:
+            return fence.group(1).strip()
+        # fallback: from first def to end
+        m = re.search(r"^\s*def\s+", s, flags=re.M)
+        return s[m.start():].strip() if m else s
+
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
         """评估MBPP任务"""
         iteration_counter['count'] += 1
@@ -2152,10 +2170,49 @@ def create_mbpp_evaluation_fn(
         all_scores = []
         with torch.no_grad():
             for batch in dataloader:
-                input_ids = batch['input_ids'].to(device)
-                attention_mask = batch['attention_mask'].to(device)
+                use_chat = bool(mbpp_qwen_chat and hasattr(tokenizer, "apply_chat_template"))
                 test_lists = batch['test_list']
                 setup_codes = batch['test_setup_code']
+                test_imports = batch.get('test_imports', [""] * len(test_lists))
+                ref_codes = batch.get('reference_code', [""] * len(test_lists))
+                prompts = batch.get('prompts', None)
+
+                if use_chat and prompts is not None:
+                    # few-shot exemplars（从提供的数据集采样，若无则为空）
+                    exemplars = []
+                    if mbpp_few_shot_dataset is not None and len(mbpp_few_shot_dataset) > 0:
+                        import random as _rnd
+                        k = max(0, int(mbpp_few_shot_k))
+                        idxs = list(range(min(len(mbpp_few_shot_dataset), 64)))
+                        _rnd.Random(42).shuffle(idxs)
+                        exemplars = idxs[:k]
+
+                    texts = []
+                    for q, ref in zip(prompts, ref_codes):
+                        expected = _parse_first_def_name(ref or "")
+                        msgs = [{"role": "system", "content": "You are a helpful Python coder. Output only a valid Python function that solves the task."}]
+                        # attach few-shot
+                        for ex_i in exemplars:
+                            ex_item = mbpp_few_shot_dataset[ex_i]
+                            ex_q = ex_item.get("prompt") or ex_item.get("text") or ex_item.get("description") or ex_item.get("task_description") or ""
+                            ex_a = ex_item.get("code", "")
+                            if ex_q and ex_a:
+                                msgs.append({"role": "user", "content": ex_q})
+                                msgs.append({"role": "assistant", "content": f"```python\n{ex_a}\n```"})
+                        # current question
+                        # 若已知期望函数名，给出轻提示
+                        if expected:
+                            q = q + f"\nReturn a function named {expected}."
+                        msgs.append({"role": "user", "content": q})
+                        text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+                        texts.append(text)
+
+                    enc = tokenizer(texts, padding=True, truncation=True, max_length=1024, return_tensors="pt")
+                    input_ids = enc["input_ids"].to(device)
+                    attention_mask = enc["attention_mask"].to(device)
+                else:
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
                 
                 # Generate代码
                 generated_ids = restored_model.generate(
@@ -2174,19 +2231,22 @@ def create_mbpp_evaluation_fn(
                 )
                 
                 # 执行测试评估每个样本
-                for sample_idx, (gen_code, tests, setup) in enumerate(zip(generated_codes, test_lists, setup_codes)):
+                for sample_idx, (gen_code, tests, setup, timport, ref) in enumerate(zip(generated_codes, test_lists, setup_codes, test_imports, ref_codes)):
                     try:
                         # 清理生成的代码（移除markdown代码块标记等）
-                        clean_code = gen_code.strip()
-                        if clean_code.startswith("```python"):
-                            clean_code = clean_code[len("```python"):].strip()
-                        if clean_code.startswith("```"):
-                            clean_code = clean_code[3:].strip()
-                        if clean_code.endswith("```"):
-                            clean_code = clean_code[:-3].strip()
+                        clean_code = _clean_code_block(gen_code)
+
+                        # 函数名 alias：期望名 ← 生成名
+                        expected = _parse_first_def_name(ref or "")
+                        generated = _parse_first_def_name(clean_code)
+                        alias_line = ""
+                        if expected and generated and expected != generated:
+                            alias_line = f"\n{expected} = {generated}"
+                            clean_code = clean_code + alias_line
                         
                         # 执行测试
-                        is_correct = safe_execute_code(clean_code, tests, setup)
+                        merged_setup = ((timport or "").strip() + "\n" + (setup or "").strip()).strip()
+                        is_correct = safe_execute_code(clean_code, tests, merged_setup)
                         all_scores.append(1.0 if is_correct else 0.0)
                         
                         # 调试：打印前2个样本的输出
@@ -2297,6 +2357,9 @@ def create_multi_task_evaluation_fn(
             rank=rank,
             eval_subset_size=eval_subset_size,
             return_subset_only=True,  # 多任务评估：不进行分布式聚合
+            mbpp_qwen_chat=False,  # 可按需接主开关
+            mbpp_few_shot_k=3,
+            mbpp_few_shot_dataset=None,
         )
     
     # 创建DoT评估函数（在线生成）
