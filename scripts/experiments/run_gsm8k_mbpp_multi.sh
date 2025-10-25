@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Multi-GPU launcher for GSM8K + MBPP evaluations with Sparsity-Aware Natural Niches
 # - Supports torchrun DDP and single-process JAX sharding
-# - Sweeps pop_size in {12,16}
+# - Single run per invocation; configure via env or inline vars
 # - Allows subset evaluation per-iteration (eval_subset_size)
 
 # ====== Environment & Paths ======
@@ -26,7 +26,6 @@ ARCHIVE_BACKEND=${ARCHIVE_BACKEND:-gpu}
 # ====== Task & Model Config ======
 MODEL_PATH=${MODEL_PATH:-/mnt/shared-storage-user/yefei/SparseFusion/models/Qwen2.5-Coder-0.5B-Instruct}
 MBPP_PATH=${MBPP_PATH:-/mnt/shared-storage-user/yefei/SparseFusion/datasets/mbpp_hf}
-BFCL_DATA_PATH=${BFCL_DATA_PATH:-berkeley-function-call-leaderboard/bfcl_eval/data/gsm8k_like.json}
 
 # Evaluation subset per iteration (speedup). Use 15 per your request.
 EVAL_SUBSET_SIZE=${EVAL_SUBSET_SIZE:-15}
@@ -40,14 +39,19 @@ FEW_SHOT_SPLIT=${FEW_SHOT_SPLIT:-train}
 # Weights
 GSM8K_WEIGHT=${GSM8K_WEIGHT:-0.5}
 MBPP_WEIGHT=${MBPP_WEIGHT:-0.5}
-BFCL_WEIGHT=${BFCL_WEIGHT:-0.0}
+
+#########################
+# Required: population size
+#########################
+POP_SIZE=${POP_SIZE:-}
+if [[ -z "${POP_SIZE}" ]]; then
+  echo "[Launcher] Please set POP_SIZE (e.g., POP_SIZE=12)" >&2
+  exit 2
+fi
 
 # Evolution scale
 RUNS=${RUNS:-1}
 TOTAL_FP=${TOTAL_FP:-5000}
-
-# Sweep over pop sizes
-POPS=(12 16)
 
 # Common args passed to main
 COMMON_ARGS=(
@@ -57,8 +61,7 @@ COMMON_ARGS=(
   --model2_path "$MODEL_PATH"
   --eval_subset_size "$EVAL_SUBSET_SIZE"
   --use_mbpp_eval --mbpp_data_path "$MBPP_PATH"
-  --use_bfcl_eval --bfcl_data_path "$BFCL_DATA_PATH"
-  --gsm8k_weight "$GSM8K_WEIGHT" --bfcl_weight "$BFCL_WEIGHT" --mbpp_weight "$MBPP_WEIGHT"
+  --gsm8k_weight "$GSM8K_WEIGHT" --mbpp_weight "$MBPP_WEIGHT"
 )
 
 if (( USE_GSM8K_QWEN )); then
@@ -68,36 +71,32 @@ if (( USE_MBPP_QWEN )); then
   COMMON_ARGS+=(--mbpp_qwen_chat --mbpp_few_shot_k "$FEW_SHOT_K" --mbpp_few_shot_split "$FEW_SHOT_SPLIT")
 fi
 
-echo "[Launcher] GPUS_PER_NODE=${GPUS_PER_NODE} | ARCHIVE_BACKEND=${ARCHIVE_BACKEND} | JAX_SHARD=${USE_SINGLE_PROCESS_SHARDING}" >&2
+echo "[Launcher] GPUS_PER_NODE=${GPUS_PER_NODE} | ARCHIVE_BACKEND=${ARCHIVE_BACKEND} | JAX_SHARD=${USE_SINGLE_PROCESS_SHARDING} | POP_SIZE=${POP_SIZE}" >&2
 
-for POP in "${POPS[@]}"; do
-  echo "\n========== Running pop_size=${POP} ==========" >&2
-
-  if (( GPUS_PER_NODE > 1 )); then
-    if [[ "$USE_SINGLE_PROCESS_SHARDING" != "0" ]]; then
-      echo "[Mode] Single-process with JAX sharding across ${GPUS_PER_NODE} GPUs" >&2
-      JAX_PLATFORM_NAME=cpu \
-      python main_sparsity_aware.py \
-        --archive_backend "$ARCHIVE_BACKEND" \
-        --pop_size "$POP" \
-        "${COMMON_ARGS[@]}"
-    else
-      echo "[Mode] torchrun DDP with ${GPUS_PER_NODE} processes" >&2
-      export JAX_PLATFORM_NAME=cpu
-      torchrun --standalone --nproc_per_node="$GPUS_PER_NODE" \
-        main_sparsity_aware.py \
-        --distributed \
-        --archive_backend "$ARCHIVE_BACKEND" \
-        --pop_size "$POP" \
-        "${COMMON_ARGS[@]}"
-    fi
-  else
-    echo "[Mode] Single GPU" >&2
+if (( GPUS_PER_NODE > 1 )); then
+  if [[ "$USE_SINGLE_PROCESS_SHARDING" != "0" ]]; then
+    echo "[Mode] Single-process with JAX sharding across ${GPUS_PER_NODE} GPUs" >&2
+    JAX_PLATFORM_NAME=cpu \
     python main_sparsity_aware.py \
       --archive_backend "$ARCHIVE_BACKEND" \
-      --pop_size "$POP" \
-      "${COMMON_ARGS[@]}"
+      --pop_size "$POP_SIZE" \
+      "${COMMON_ARGS[@]}" "$@"
+  else
+    echo "[Mode] torchrun DDP with ${GPUS_PER_NODE} processes" >&2
+    export JAX_PLATFORM_NAME=cpu
+    torchrun --standalone --nproc_per_node="$GPUS_PER_NODE" \
+      main_sparsity_aware.py \
+      --distributed \
+      --archive_backend "$ARCHIVE_BACKEND" \
+      --pop_size "$POP_SIZE" \
+      "${COMMON_ARGS[@]}" "$@"
   fi
-done
+else
+  echo "[Mode] Single GPU" >&2
+  python main_sparsity_aware.py \
+    --archive_backend "$ARCHIVE_BACKEND" \
+    --pop_size "$POP_SIZE" \
+    "${COMMON_ARGS[@]}" "$@"
+fi
 
 
