@@ -1639,8 +1639,39 @@ def run_natural_niches_sparsity_aware(
                                 archive, async_coordinator
                             )
 
+                    # Append per-iteration evolution metrics to a single JSONL (every step)
+                    if is_main_process:
+                        try:
+                            # Compute lightweight scalar metrics for plotting
+                            archive_fitness_vals = jnp.mean(scores, axis=1)
+                            archive_total_scores = compute_total_scores(
+                                archive, scores, omega, beta, tau, alpha, num_tasks, epsilon
+                            )
+                            record = {
+                                "iteration": int(i + 1),
+                                "run": int(run + 1),
+                                "pop_size": int(pop_size),
+                                "eval_subset_size": int(eval_subset_size) if eval_subset_size is not None else None,
+                                "omega": float(omega),
+                                "beta": float(beta),
+                                "tau": float(tau),
+                                "child_mean": float(jnp.mean(score)),
+                                "archive_fitness_mean": float(jnp.mean(archive_fitness_vals)),
+                                "archive_fitness_max": float(jnp.max(archive_fitness_vals)),
+                                "archive_total_mean": float(jnp.mean(archive_total_scores)),
+                                "archive_total_max": float(jnp.max(archive_total_scores)),
+                                "parent_indices": [int(p1_idx), int(p2_idx)],
+                            }
+                            log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
+                            os.makedirs(log_dir, exist_ok=True)
+                            jsonl_path = os.path.join(log_dir, f"evolution_run{run+1}.jsonl")
+                            with open(jsonl_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+
                     # Record iteration statistics (every 10 steps to reduce overhead)
-                    if (i + 1) % 10 == 0 or i == 0:
+                    if (i + 1) % 10 == 0:
                         # Compute all archive statistics efficiently
                         archive_fitness_vals = jnp.mean(scores, axis=1)
                         archive_sparsity_vals = jnp.array(
@@ -1680,34 +1711,34 @@ def run_natural_niches_sparsity_aware(
                         }
                         results[run]["iterations"].append(iteration_stats)
 
-                        # 按步持久化完整fitness记录到独立文件（每10步）
-                        try:
-                            log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
-                            os.makedirs(log_dir, exist_ok=True)
-                            # 归一化后的archive fitness（当前scores矩阵）
-                            fitness_vector = compute_normalized_fitness(
-                                scores, alpha, num_tasks
-                            )
-                            log_path = os.path.join(
-                                log_dir, f"fitness_run{run+1}_step{i+1}.npz"
-                            )
-                            np.savez(
-                                log_path,
-                                iteration=i + 1,
-                                run=run + 1,
-                                parent_indices=np.array([int(p1_idx), int(p2_idx)], dtype=np.int32),
-                                child_scores=np.array(score, dtype=np.float32),
-                                archive_fitness_normalized=np.array(
-                                    fitness_vector, dtype=np.float32
-                                ),
-                                archive_total_scores=np.array(
-                                    archive_total_scores, dtype=np.float32
-                                ),
-                                archive_scores=np.array(scores, dtype=np.float32),
-                            )
-                        except Exception as _e:
-                            # 安全失败，不中断主流程
-                            pass
+                        # Optional: write NPZ snapshot every 10 steps (disabled by default; enable via WRITE_FITNESS_NPZ=1)
+                        if os.environ.get("WRITE_FITNESS_NPZ", "0") == "1":
+                            try:
+                                log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
+                                os.makedirs(log_dir, exist_ok=True)
+                                # 归一化后的archive fitness（当前scores矩阵）
+                                fitness_vector = compute_normalized_fitness(
+                                    scores, alpha, num_tasks
+                                )
+                                log_path = os.path.join(
+                                    log_dir, f"fitness_run{run+1}_step{i+1}.npz"
+                                )
+                                np.savez(
+                                    log_path,
+                                    iteration=i + 1,
+                                    run=run + 1,
+                                    parent_indices=np.array([int(p1_idx), int(p2_idx)], dtype=np.int32),
+                                    child_scores=np.array(score, dtype=np.float32),
+                                    archive_fitness_normalized=np.array(
+                                        fitness_vector, dtype=np.float32
+                                    ),
+                                    archive_total_scores=np.array(
+                                        archive_total_scores, dtype=np.float32
+                                    ),
+                                    archive_scores=np.array(scores, dtype=np.float32),
+                                )
+                            except Exception:
+                                pass
 
                 # --- GPU Memory Cleanup (Every 100 steps to prevent memory leak) ---
                 if (i + 1) % 100 == 0:
