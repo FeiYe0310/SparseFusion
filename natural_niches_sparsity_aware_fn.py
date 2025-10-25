@@ -2345,6 +2345,7 @@ def create_multi_task_evaluation_fn(
     gsm8k_qwen_chat: bool = False,
     gsm8k_few_shot_k: int = 3,
     gsm8k_few_shot_dataset=None,
+    per_task_subset: dict | None = None,
 ):
     """
     创建多任务评估函数：同时评估GSM8K和BFCL
@@ -2375,7 +2376,7 @@ def create_multi_task_evaluation_fn(
         distributed=distributed,
         world_size=world_size,
         rank=rank,
-        eval_subset_size=eval_subset_size,
+        eval_subset_size=(per_task_subset.get("gsm8k") if per_task_subset else eval_subset_size),
         return_subset_only=True,  # 多任务：不扩展，直接返回子集分数
         gsm8k_qwen_chat=gsm8k_qwen_chat,
         gsm8k_few_shot_k=gsm8k_few_shot_k,
@@ -2407,7 +2408,7 @@ def create_multi_task_evaluation_fn(
             distributed=distributed,
             world_size=world_size,
             rank=rank,
-            eval_subset_size=eval_subset_size,
+            eval_subset_size=(per_task_subset.get("mbpp") if per_task_subset else eval_subset_size),
             return_subset_only=True,  # 多任务评估：不进行分布式聚合
             mbpp_qwen_chat=False,  # 可按需接主开关
             mbpp_few_shot_k=3,

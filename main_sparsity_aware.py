@@ -69,6 +69,12 @@ def parse_arguments():
                         help="Number of samples to evaluate per iteration (None=all data, 30=sample 30 points per iter for speedup)")
     parser.add_argument("--eval_on_test_subset", action="store_true",
                         help="Use test split (subset) for per-iteration evaluation instead of train split")
+    parser.add_argument("--eval_subset_size_gsm8k", type=int, default=None,
+                        help="Override per-iteration subset size for GSM8K (train split)")
+    parser.add_argument("--eval_subset_size_mbpp", type=int, default=None,
+                        help="Override per-iteration subset size for MBPP (train split)")
+    parser.add_argument("--test_eval_subset_size", type=int, default=None,
+                        help="Subset size for every-10-step test evaluation (default: follow eval_subset_size_gsm8k or eval_subset_size)")
     
     # 🎯 BFCL多任务评估参数
     parser.add_argument("--use_bfcl_eval", action="store_true",
@@ -219,6 +225,9 @@ def main():
         log_sparsity_stats=args.log_sparsity_stats,
         eval_subset_size=args.eval_subset_size,  # 🚀 加速参数
         eval_on_test_subset=args.eval_on_test_subset,
+        eval_subset_size_gsm8k=args.eval_subset_size_gsm8k,
+        eval_subset_size_mbpp=args.eval_subset_size_mbpp,
+        test_eval_subset_size=args.test_eval_subset_size,
         use_bfcl_eval=args.use_bfcl_eval,  # 🎯 BFCL评估
         bfcl_data_path=args.bfcl_data_path,
         gsm8k_weight=args.gsm8k_weight,
