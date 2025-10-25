@@ -65,16 +65,16 @@ def parse_arguments():
                         help="Do not save the final best model .npz; only save results .pkl/.json")
     
     # 🚀 加速参数
-    parser.add_argument("--eval_subset_size", type=int, default=None,
-                        help="Number of samples to evaluate per iteration (None=all data, 30=sample 30 points per iter for speedup)")
+    parser.add_argument("--eval_subset_size", type=int, default=15,
+                        help="Number of samples to evaluate per iteration (default: 15; None=all data)")
     parser.add_argument("--eval_on_test_subset", action="store_true",
                         help="Use test split (subset) for per-iteration evaluation instead of train split")
     parser.add_argument("--eval_subset_size_gsm8k", type=int, default=None,
                         help="Override per-iteration subset size for GSM8K (train split)")
     parser.add_argument("--eval_subset_size_mbpp", type=int, default=None,
                         help="Override per-iteration subset size for MBPP (train split)")
-    parser.add_argument("--test_eval_subset_size", type=int, default=None,
-                        help="Subset size for every-10-step test evaluation (default: follow eval_subset_size_gsm8k or eval_subset_size)")
+    parser.add_argument("--test_eval_subset_size", type=int, default=15,
+                        help="Subset size for periodic evaluation (default: 15; follows per-task if set)")
     
     # 🎯 BFCL多任务评估参数
     parser.add_argument("--use_bfcl_eval", action="store_true",

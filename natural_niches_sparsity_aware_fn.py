@@ -609,9 +609,9 @@ def create_evaluation_fn_for_llm(
             eval_dataset = Subset(tokenized_dataset, indices)
             iteration_counter["count"] += 1
 
-            if rank == 0 and os.environ.get("VERBOSE_EVAL", "0") == "1":
+            if rank == 0:
                 print(
-                    f"  [Eval] 使用 {eval_subset_size}/{len(tokenized_dataset)} 样本 (iteration {iteration_counter['count']})"
+                    f"  [GSM8K] 采样 {eval_subset_size}/{len(tokenized_dataset)} 样本"
                 )
         else:
             eval_dataset = tokenized_dataset
@@ -1230,7 +1230,7 @@ def run_natural_niches_sparsity_aware(
             task_weights=task_weights_dict,
             distributed=dist_enabled,
             world_size=world_size,
-            mbpp_dataset=mbpp_dataset,
+            mbpp_dataset=mbpp_test_dataset,
             rank=rank,
             eval_subset_size=eval_subset_size,
             use_mult4_eval=use_mult4_eval,
@@ -1722,10 +1722,10 @@ def run_natural_niches_sparsity_aware(
 
                 # --- Periodic Full Archive Reporting every 10 steps ---
                 if (i + 1) % 10 == 0:
-                    # 10步：在test子集上评估当前child（仅日志用途，不参与选择）
-                    if 'test_eval_fn' in locals() and test_eval_fn is not None and is_main_process:
+                    # 10步：在训练子集上评估当前child（仅日志用途，不参与选择）
+                    if 'train_eval_fn' in locals() and is_main_process:
                         try:
-                            test_scores = test_eval_fn(child_bf16)
+                            test_scores = train_eval_fn(child_bf16)
                             avg_test = float(jnp.mean(test_scores)) if len(test_scores) > 0 else 0.0
                             test_log_dir = os.path.join(RESULTS_DIR, "test_eval_logs")
                             os.makedirs(test_log_dir, exist_ok=True)
@@ -1741,7 +1741,7 @@ def run_natural_niches_sparsity_aware(
                                 json.dump({
                                     "step": i + 1,
                                     "avg_test_fitness": avg_test,
-                                    "num_test_samples": int(len(test_scores)),
+                                    "num_test_samples": int(len(test_scores)),  # 这里实际来自训练子集
                                     "pop_size": int(pop_size),
                                     "eval_subset_size": (int(eval_subset_size) if eval_subset_size is not None else None),
                                     "omega": float(omega),
@@ -1757,11 +1757,11 @@ def run_natural_niches_sparsity_aware(
                                     "mbpp_weight": float(mbpp_weight),
                                 }, f)
                             if os.environ.get("VERBOSE_EVAL", "0") == "1":
-                                print(f"[Test Eval] step {i+1}: avg_test_fitness={avg_test:.4f} on GSM8K test subset")
+                                print(f"[Periodic Eval] step {i+1}: avg_fitness(train subset)={avg_test:.4f}")
                         except Exception:
                             pass
 
-                    # MBPP 每10步 test 子集评估
+                    # MBPP 每10步 测试子集评估（使用257样本的split）
                     if mbpp_test_dataset is not None and is_main_process:
                         try:
                             mbpp_test_eval_fn = create_mbpp_evaluation_fn(
@@ -1803,7 +1803,7 @@ def run_natural_niches_sparsity_aware(
                                     "tau": float(tau),
                                 }, f)
                             if os.environ.get("VERBOSE_EVAL", "0") == "1":
-                                print(f"[Test Eval][MBPP] step {i+1}: avg_test_fitness={mbpp_avg_test:.4f}")
+                                print(f"[Periodic Eval][MBPP] step {i+1}: avg_fitness(train subset)={mbpp_avg_test:.4f}")
                         except Exception:
                             pass
 
