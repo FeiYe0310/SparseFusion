@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import torch
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
+import os
 from typing import List, Tuple, Any, Union, Literal, Optional
 from tqdm.auto import tqdm
 
@@ -321,32 +322,34 @@ def get_pre_trained_models_and_skeleton(
     except Exception:
         pass
 
+    # 可通过环境变量禁用分词器合并（默认禁用，减少乱码风险）
+    disable_merge = os.environ.get("DISABLE_TOKENIZER_MERGE", "1") == "1"
     base_choice = base_tokenizer.lower()
     if base_choice not in {"model1", "model2"}:
         raise ValueError("base_tokenizer must be 'model1' or 'model2'")
 
-    if base_choice == "model1":
-        merged_tokenizer, model1, model2 = merge_tokenizers_and_align_models(
-            model1, tokenizer1, model2, tokenizer2
-        )
+    if disable_merge:
+        # 使用基准模型的分词器，不做合并/重映射
+        tokenizer_shared = tokenizer1 if base_choice == "model1" else tokenizer2
     else:
-        merged_tokenizer, model2, model1 = merge_tokenizers_and_align_models(
-            model2, tokenizer2, model1, tokenizer1
-        )
-
-    tokenizer_shared = merged_tokenizer
+        # 合并词表并对齐嵌入（如需混用不同变体时开启）
+        if base_choice == "model1":
+            merged_tokenizer, model1, model2 = merge_tokenizers_and_align_models(
+                model1, tokenizer1, model2, tokenizer2
+            )
+        else:
+            merged_tokenizer, model2, model1 = merge_tokenizers_and_align_models(
+                model2, tokenizer2, model1, tokenizer1
+            )
+        tokenizer_shared = merged_tokenizer
 
     print("Flattening parameters of both models...")
     flat_params1, param_shapes1, total_params1 = pytorch_to_jax_flattened(model1)
     flat_params2, param_shapes2, total_params2 = pytorch_to_jax_flattened(model2)
 
-    if total_params1 != total_params2:
+    if total_params1 != total_params2 or len(param_shapes1) != len(param_shapes2):
         raise ValueError(
-            "Model parameter counts differ after tokenizer merge; review architectures before flattening."
-        )
-    if len(param_shapes1) != len(param_shapes2):
-        raise ValueError(
-            "Parameter shape lists differ after tokenizer merge; ensure models share architecture."
+            "Model structures differ (param count/shapes). 请使用相同架构与词表的模型，或将 DISABLE_TOKENIZER_MERGE=0 以启用合并对齐。"
         )
 
     # --- Memory Optimization ---
