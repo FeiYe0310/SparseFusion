@@ -935,6 +935,10 @@ def run_natural_niches_sparsity_aware(
     use_mbpp_eval: bool = False,  # 是否启用MBPP评估
     mbpp_data_path: str = "mbpp/data/mbpp_test.json",  # MBPP数据路径
     mbpp_weight: float = 0.33,  # MBPP任务权重
+    # MBPP Qwen few-shot（与main_sparsity_aware保持一致，当前版本不强制使用）
+    mbpp_qwen_chat: bool = False,
+    mbpp_few_shot_k: int = 3,
+    mbpp_few_shot_split: str = "train",
     # 🔄 NEW: Dynamic Sparsity with Warm Restarts
     use_dynamic_sparsity: bool = False,  # 是否启用动态稀疏度调度
     sparsity_min: float = 0.1,  # 最小稀疏度 (eta_min)
