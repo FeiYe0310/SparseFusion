@@ -1723,12 +1723,31 @@ def run_natural_niches_sparsity_aware(
                             test_log_dir = os.path.join(RESULTS_DIR, "test_eval_logs")
                             os.makedirs(test_log_dir, exist_ok=True)
                             import json
-                            with open(os.path.join(test_log_dir, f"test_run{run+1}_step{i+1}.json"), "w") as f:
+                            # 构建更丰富的文件名（去掉 run），便于快速对比
+                            subset_tag = (
+                                f"subset{eval_subset_size}" if eval_subset_size is not None else "subsetAll"
+                            )
+                            fname = (
+                                f"test_step{i+1}_pop{pop_size}_{subset_tag}_w{omega:.2f}_b{beta:.2f}.json"
+                            )
+                            with open(os.path.join(test_log_dir, fname), "w") as f:
                                 json.dump({
-                                    "run": run + 1,
                                     "step": i + 1,
                                     "avg_test_fitness": avg_test,
                                     "num_test_samples": int(len(test_scores)),
+                                    "pop_size": int(pop_size),
+                                    "eval_subset_size": (int(eval_subset_size) if eval_subset_size is not None else None),
+                                    "omega": float(omega),
+                                    "beta": float(beta),
+                                    "tau": float(tau),
+                                    "use_dynamic_sparsity": bool(use_dynamic_sparsity),
+                                    "sparsity_min": float(sparsity_min),
+                                    "sparsity_max": float(sparsity_max),
+                                    "sparsity_t0": int(sparsity_t0),
+                                    "sparsity_t_mult": int(sparsity_t_mult),
+                                    "gsm8k_weight": float(gsm8k_weight),
+                                    "bfcl_weight": float(bfcl_weight),
+                                    "mbpp_weight": float(mbpp_weight),
                                 }, f)
                             if os.environ.get("VERBOSE_EVAL", "0") == "1":
                                 print(f"[Test Eval] step {i+1}: avg_test_fitness={avg_test:.4f} on GSM8K test subset")
