@@ -13,6 +13,7 @@ os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from torch.utils.data import DataLoader, Subset
+from datasets import load_from_disk
 
 # Add project root to sys.path so we can import helper modules when running from scripts/
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -116,6 +117,9 @@ def evaluate_mbpp_with_model(
     device: torch.device,
     return_details: bool = False,
     max_details: int | None = None,
+    use_three_shot: bool = False,
+    few_shot_k: int = 3,
+    few_shot_split: str = "train",
 ) -> dict:
     ds = MBPPDataset(mbpp_path, tokenizer)
     if subset is not None and subset < len(ds):
@@ -129,6 +133,35 @@ def evaluate_mbpp_with_model(
         eval_ds, batch_size=batch_size, shuffle=False, num_workers=0,
         collate_fn=lambda b: mbpp_collate_fn(b, tokenizer),
     )
+    # Prepare exemplar pool for few-shot, if enabled
+    exemplar_pool: list[dict] | None = None
+    if use_three_shot and few_shot_k > 0:
+        try:
+            ds_all = load_from_disk(mbpp_path)
+            if few_shot_split in ds_all and len(ds_all[few_shot_split]) > 0:
+                exemplar_pool = list(ds_all[few_shot_split])
+            else:
+                # fallback to train/validation/test order
+                for sp in ("train", "validation", "test"):
+                    if sp in ds_all and len(ds_all[sp]) > 0:
+                        exemplar_pool = list(ds_all[sp])
+                        break
+        except Exception:
+            exemplar_pool = None
+
+    def build_few_shot_prompt(cur_prompt: str) -> str:
+        if not exemplar_pool:
+            return cur_prompt
+        rng = random.Random(0)
+        examples = rng.sample(exemplar_pool, k=min(few_shot_k, len(exemplar_pool)))
+        parts = []
+        for i, ex in enumerate(examples, 1):
+            ex_p = ex.get("prompt", "")
+            ex_c = ex.get("code", "")
+            parts.append(f"### Example {i}\nProblem: {ex_p}\nSolution:\n{ex_c}\n")
+        parts.append(f"### Task\nProblem: {cur_prompt}\nSolution:")
+        return "\n\n".join(parts)
+
 
     passed = 0
     total = 0
@@ -136,8 +169,21 @@ def evaluate_mbpp_with_model(
 
     with torch.no_grad():
         for batch in loader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
+            # Optionally rebuild inputs with few-shot prompts
+            if use_three_shot and few_shot_k > 0:
+                fs_prompts = [build_few_shot_prompt(p) for p in batch["prompts"]]
+                enc = tokenizer(
+                    fs_prompts,
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                    return_tensors="pt",
+                )
+                input_ids = enc["input_ids"].to(device)
+                attention_mask = enc["attention_mask"].to(device)
+            else:
+                input_ids = batch["input_ids"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
             tests_list = batch["test_list"]
             setup_codes = batch["test_setup_code"]
             imports_codes = batch.get("test_imports", [""] * len(setup_codes))
@@ -155,7 +201,7 @@ def evaluate_mbpp_with_model(
             gen_texts = tokenizer.batch_decode(gen_ids[:, input_ids.shape[1]:], skip_special_tokens=True)
 
             for prompt, gen, tests, setup, imports_code, ref_code in zip(
-                prompts, gen_texts, tests_list, setup_codes, imports_codes, ref_codes
+                batch["prompts"], gen_texts, tests_list, setup_codes, imports_codes, ref_codes
             ):
                 code = clean_code_block(gen)
                 # Function name aliasing
@@ -191,6 +237,9 @@ def main():
     parser.add_argument("--subset", type=int, default=20)
     parser.add_argument("--print_n", type=int, default=0, help="Print first N detailed samples for baseline and roundtrip")
     parser.add_argument("--dump_path", type=str, default=None, help="Optional path to dump all detailed results as JSON")
+    parser.add_argument("--three_shot", action="store_true", help="Enable 3-shot (few-shot) prompts for MBPP")
+    parser.add_argument("--few_shot_k", type=int, default=3, help="Number of exemplars for few-shot prompts")
+    parser.add_argument("--few_shot_split", type=str, default="train", help="Split to sample exemplars from (train/validation/test)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -204,6 +253,7 @@ def main():
         model_orig, tokenizer, args.mbpp_path, args.batch_size, args.subset, device,
         return_details=(args.print_n > 0 or args.dump_path is not None),
         max_details=(args.print_n if args.print_n > 0 else None),
+        use_three_shot=args.three_shot, few_shot_k=args.few_shot_k, few_shot_split=args.few_shot_split,
     )
     print(json.dumps({k: (v if k != "samples" else (v[:args.print_n] if args.print_n > 0 else [])) for k, v in baseline.items()}, ensure_ascii=False, indent=2))
 
@@ -225,6 +275,7 @@ def main():
         model_skel, tokenizer, args.mbpp_path, args.batch_size, args.subset, device,
         return_details=(args.print_n > 0 or args.dump_path is not None),
         max_details=(args.print_n if args.print_n > 0 else None),
+        use_three_shot=args.three_shot, few_shot_k=args.few_shot_k, few_shot_split=args.few_shot_split,
     )
     print(json.dumps({k: (v if k != "samples" else (v[:args.print_n] if args.print_n > 0 else [])) for k, v in roundtrip.items()}, ensure_ascii=False, indent=2))
 
