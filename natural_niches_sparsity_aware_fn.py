@@ -1656,11 +1656,24 @@ def run_natural_niches_sparsity_aware(
                                     "beta": float(beta),
                                     "tau": float(tau),
                                     "child_mean": float(jnp.mean(score)),
+                                    "child_sparsity": float(compute_sparsity(child_bf16, epsilon)),
+                                    "fitness_vector": [float(x) for x in jnp.array(score)],
                                     "archive_fitness_mean": float(jnp.mean(archive_fitness_vals)),
                                     "archive_fitness_max": float(jnp.max(archive_fitness_vals)),
                                     "archive_total_mean": float(jnp.mean(archive_total_scores)),
                                     "archive_total_max": float(jnp.max(archive_total_scores)),
                                     "parent_indices": [int(p1_idx), int(p2_idx)],
+                                    # 额外写入完整向量，便于后续分析
+                                    "archive_fitness_vals": [float(v) for v in jnp.array(archive_fitness_vals)],
+                                    "archive_total_scores": [float(v) for v in jnp.array(archive_total_scores)],
+                                    "archive_sparsity_vals": [
+                                        float(compute_sparsity(archive[j], epsilon)) for j in range(pop_size)
+                                    ],
+                                    # 记录每任务的子集大小和任务权重
+                                    "eval_subset_size_gsm8k": int(eval_subset_size_gsm8k) if eval_subset_size_gsm8k is not None else None,
+                                    "eval_subset_size_mbpp": int(eval_subset_size_mbpp) if eval_subset_size_mbpp is not None else None,
+                                    "gsm8k_weight": float(gsm8k_weight),
+                                    "mbpp_weight": float(mbpp_weight),
                                 }
                                 log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
                                 os.makedirs(log_dir, exist_ok=True)
