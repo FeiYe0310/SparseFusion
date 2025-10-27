@@ -2386,11 +2386,45 @@ def create_mbpp_evaluation_fn(
                     eos_token_id=tokenizer.eos_token_id,
                 )
                 
-                # Decode生成的代码
-                generated_codes = tokenizer.batch_decode(
-                    generated_ids[:, input_ids.shape[1]:],
-                    skip_special_tokens=True
+                # Decode生成的代码（安全解码，避免越界ID导致None）
+                gen_slice = generated_ids[:, input_ids.shape[1]:]
+                vocab_size = getattr(tokenizer, "vocab_size", None) or getattr(restored_model.config, "vocab_size", None)
+                unk_id = getattr(tokenizer, "unk_token_id", None)
+                fallback_id = (
+                    unk_id if isinstance(unk_id, int) and unk_id >= 0 else
+                    (tokenizer.eos_token_id if getattr(tokenizer, "eos_token_id", None) is not None else
+                     (tokenizer.pad_token_id if getattr(tokenizer, "pad_token_id", None) is not None else 0))
                 )
+                if vocab_size is not None:
+                    gen_slice = torch.where(
+                        gen_slice < vocab_size,
+                        gen_slice,
+                        torch.full_like(gen_slice, fallback_id)
+                    )
+                try:
+                    generated_codes = tokenizer.batch_decode(
+                        gen_slice,
+                        skip_special_tokens=True
+                    )
+                except TypeError:
+                    # 退化路径：逐条解码并再次兜底
+                    generated_codes = []
+                    for row in gen_slice:
+                        row_ids = row.tolist()
+                        if vocab_size is not None:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and 0 <= id_ < vocab_size else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        else:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and id_ >= 0 else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        try:
+                            generated_codes.append(tokenizer.decode(row_ids, skip_special_tokens=True))
+                        except Exception:
+                            generated_codes.append("")
                 
                 # 执行测试评估每个样本
                 for sample_idx, (gen_code, tests, setup, timport, ref) in enumerate(zip(generated_codes, test_lists, setup_codes, test_imports, ref_codes)):
