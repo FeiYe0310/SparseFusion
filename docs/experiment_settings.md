@@ -493,3 +493,5 @@ bash /mnt/shared-storage-user/yefei/SparseFusion/scripts/experiments/run_gsm8k_m
   --gsm8k_qwen_chat --gsm8k_few_shot_k 3 --gsm8k_few_shot_split train \
   --mbpp_qwen_chat --mbpp_few_shot_k 3 --mbpp_few_shot_split train
 ```
+
+

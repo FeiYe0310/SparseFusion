@@ -1937,17 +1937,39 @@ def run_natural_niches_sparsity_aware(
                                 }
                             )
 
-                # --- Periodic Checkpoint Save (Every 2500 steps) ---
-                if (i + 1) % 2500 == 0 and is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
+                # --- Periodic Checkpoint Save (Every 500 steps) ---
+                if (i + 1) % 500 == 0 and is_main_process:
                     from datetime import datetime
+                    import re
 
                     checkpoint_dir = os.path.join(RESULTS_DIR, "checkpoints")
                     os.makedirs(checkpoint_dir, exist_ok=True)
 
-                    checkpoint_path = os.path.join(
-                        checkpoint_dir,
-                        f"checkpoint_run{run+1}_step{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl",
-                    )
+                    # Build informative checkpoint filename to distinguish tasks
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    job_name = os.environ.get("JOB_NAME", "").strip()
+                    if job_name:
+                        job_name = re.sub(r"[^A-Za-z0-9_.-]", "_", job_name)
+
+                    task_parts = ["gsm8k"]
+                    if use_mbpp_eval:
+                        task_parts.append("mbpp")
+                    if use_bfcl_eval:
+                        task_parts.append("bfcl")
+                    if use_mult4_eval or use_mult5_eval or use_bool_eval:
+                        task_parts.append("dot")
+                    task_tag = "+".join(task_parts)
+
+                    name_prefix = "checkpoint_"
+                    if job_name:
+                        name_prefix += f"{job_name}_"
+                    # format weights
+                    w_str = f"{omega:.4g}"
+                    b_str = f"{beta:.4g}"
+                    name_prefix += f"{task_tag}_pop{pop_size}_w{w_str}_b{b_str}_"
+
+                    checkpoint_filename = f"{name_prefix}step{i+1}_{timestamp}.pkl"
+                    checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
 
                     checkpoint_data = {
                         "iteration": i + 1,
@@ -1960,7 +1982,27 @@ def run_natural_niches_sparsity_aware(
                     with open(checkpoint_path, "wb") as f:
                         pickle.dump(checkpoint_data, f)
 
-                    print(f"💾 Checkpoint saved: {checkpoint_path}")
+                    if os.environ.get("VERBOSE_EVAL", "0") == "1":
+                        print(f"💾 Checkpoint saved: {checkpoint_path}")
+
+                    # Keep only the latest checkpoint for this run to save space
+                    try:
+                        current_name = os.path.basename(checkpoint_path)
+                        # Only delete older ckpts that share the same job/task/run/pop prefix
+                        prefix_for_cleanup = name_prefix
+                        for fname in os.listdir(checkpoint_dir):
+                            if (
+                                fname.startswith(prefix_for_cleanup)
+                                and fname.endswith(".pkl")
+                                and fname != current_name
+                            ):
+                                try:
+                                    os.remove(os.path.join(checkpoint_dir, fname))
+                                except OSError:
+                                    pass
+                    except Exception:
+                        # Best-effort cleanup; never break training due to deletion failure
+                        pass
 
         if dist_enabled:
             dist.barrier()

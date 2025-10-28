@@ -2067,7 +2067,6 @@ MODEL_CONFIG_MAPPING = {
     **local_inference_model_map,
     **third_party_inference_model_map,
 }
-
         output_price=None,
         is_fc_model=True,
         underscore_to_dot=False,
@@ -2080,3 +2079,4 @@ MODEL_CONFIG_MAPPING = {
     **local_inference_model_map,
     **third_party_inference_model_map,
 }
+
