@@ -702,11 +702,44 @@ def create_evaluation_fn_for_llm(
                     eos_token_id=tokenizer.eos_token_id,
                 )
 
-                # 解码生成的文本
-                generated_texts = tokenizer.batch_decode(
-                    generated_ids[:, input_ids.shape[1] :],  # 只要新生成的部分
-                    skip_special_tokens=True,
+                # 解码生成的文本（安全解码，避免 None）
+                gen_slice = generated_ids[:, input_ids.shape[1] :]
+                vocab_size = getattr(tokenizer, "vocab_size", None) or getattr(restored_model.config, "vocab_size", None)
+                unk_id = getattr(tokenizer, "unk_token_id", None)
+                fallback_id = (
+                    unk_id if isinstance(unk_id, int) and unk_id >= 0 else
+                    (tokenizer.eos_token_id if getattr(tokenizer, "eos_token_id", None) is not None else
+                     (tokenizer.pad_token_id if getattr(tokenizer, "pad_token_id", None) is not None else 0))
                 )
+                if vocab_size is not None:
+                    gen_slice = torch.where(
+                        gen_slice < vocab_size,
+                        gen_slice,
+                        torch.full_like(gen_slice, fallback_id)
+                    )
+                try:
+                    generated_texts = tokenizer.batch_decode(
+                        gen_slice,
+                        skip_special_tokens=True,
+                    )
+                except TypeError:
+                    generated_texts = []
+                    for row in gen_slice:
+                        row_ids = row.tolist()
+                        if vocab_size is not None:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and 0 <= id_ < vocab_size else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        else:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and id_ >= 0 else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        try:
+                            generated_texts.append(tokenizer.decode(row_ids, skip_special_tokens=True))
+                        except Exception:
+                            generated_texts.append("")
 
                 # 对比预测答案和ground truth
                 batch_scores = []
@@ -2156,10 +2189,44 @@ def create_bfcl_evaluation_fn(
                     eos_token_id=tokenizer.eos_token_id,
                 )
 
-                # Decode
-                generated_texts = tokenizer.batch_decode(
-                    generated_ids[:, input_ids.shape[1] :], skip_special_tokens=True
+                # Decode（安全解码，避免 None）
+                gen_slice = generated_ids[:, input_ids.shape[1] :]
+                vocab_size = getattr(tokenizer, "vocab_size", None) or getattr(restored_model.config, "vocab_size", None)
+                unk_id = getattr(tokenizer, "unk_token_id", None)
+                fallback_id = (
+                    unk_id if isinstance(unk_id, int) and unk_id >= 0 else
+                    (tokenizer.eos_token_id if getattr(tokenizer, "eos_token_id", None) is not None else
+                     (tokenizer.pad_token_id if getattr(tokenizer, "pad_token_id", None) is not None else 0))
                 )
+                if vocab_size is not None:
+                    gen_slice = torch.where(
+                        gen_slice < vocab_size,
+                        gen_slice,
+                        torch.full_like(gen_slice, fallback_id)
+                    )
+                try:
+                    generated_texts = tokenizer.batch_decode(
+                        gen_slice,
+                        skip_special_tokens=True
+                    )
+                except TypeError:
+                    generated_texts = []
+                    for row in gen_slice:
+                        row_ids = row.tolist()
+                        if vocab_size is not None:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and 0 <= id_ < vocab_size else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        else:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and id_ >= 0 else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        try:
+                            generated_texts.append(tokenizer.decode(row_ids, skip_special_tokens=True))
+                        except Exception:
+                            generated_texts.append("")
 
                 # Evaluate each sample
                 for gen_text, gt_call in zip(generated_texts, ground_truth_calls):
@@ -2714,10 +2781,44 @@ def create_dot_eval_fn(
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
-                gen_txts = tokenizer.batch_decode(
-                    gen_ids[:, input_ids.shape[1]:],
-                    skip_special_tokens=True
+                # 安全解码，避免 None
+                gen_slice = gen_ids[:, input_ids.shape[1]:]
+                vocab_size = getattr(tokenizer, "vocab_size", None) or getattr(restored_model.config, "vocab_size", None)
+                unk_id = getattr(tokenizer, "unk_token_id", None)
+                fallback_id = (
+                    unk_id if isinstance(unk_id, int) and unk_id >= 0 else
+                    (tokenizer.eos_token_id if getattr(tokenizer, "eos_token_id", None) is not None else
+                     (tokenizer.pad_token_id if getattr(tokenizer, "pad_token_id", None) is not None else 0))
                 )
+                if vocab_size is not None:
+                    gen_slice = torch.where(
+                        gen_slice < vocab_size,
+                        gen_slice,
+                        torch.full_like(gen_slice, fallback_id)
+                    )
+                try:
+                    gen_txts = tokenizer.batch_decode(
+                        gen_slice,
+                        skip_special_tokens=True
+                    )
+                except TypeError:
+                    gen_txts = []
+                    for row in gen_slice:
+                        row_ids = row.tolist()
+                        if vocab_size is not None:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and 0 <= id_ < vocab_size else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        else:
+                            row_ids = [
+                                (id_ if isinstance(id_, int) and id_ >= 0 else fallback_id)
+                                for id_ in row_ids
+                            ]
+                        try:
+                            gen_txts.append(tokenizer.decode(row_ids, skip_special_tokens=True))
+                        except Exception:
+                            gen_txts.append("")
 
             for i, (txt, gold) in enumerate(zip(gen_txts, batch_golds)):
                 pred = parse_fn(txt)
