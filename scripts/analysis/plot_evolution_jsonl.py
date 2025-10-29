@@ -59,14 +59,29 @@ def extract_child_matrix(records: List[Dict[str, Any]]) -> (List[int], List[List
     return iters, matrix
 
 
-def plot_file(path: str, outdir: str, smooth: int) -> str:
+def extract_archive_matrix(records: List[Dict[str, Any]]) -> (List[int], List[List[float]]):
+    """返回 (iterations, archive_fitness per step)。
+    期望每条记录中含有 archive_fitness_vals: [pop_size]。
+    若字段缺失则返回空矩阵。
+    """
+    iters: List[int] = []
+    matrix: List[List[float]] = []
+    for r in records:
+        vec = r.get("archive_fitness_vals")
+        if isinstance(vec, list) and vec:
+            it = int(r.get("iteration", len(iters) * 10))
+            iters.append(it)
+            matrix.append([float(x) for x in vec])
+    return iters, matrix
+
+
+def plot_file(path: str, outdir: str, smooth: int, only_archive_fitness: bool = False) -> str:
     records = read_jsonl(path)
     if not records:
         raise RuntimeError(f"Empty or invalid JSONL: {path}")
 
-    iters, child_matrix = extract_child_matrix(records)
-
     # 输出文件名
+
     base = os.path.basename(path)
     png_name = f"{base}.png"
     os.makedirs(outdir, exist_ok=True)
@@ -74,43 +89,61 @@ def plot_file(path: str, outdir: str, smooth: int) -> str:
 
     plt.figure(figsize=(11, 6))
 
-    # 画所有子代曲线（每条曲线对应一个固定的 child 索引，y 为随迭代的该 child 分数）
-    if child_matrix:
-        # 转置：steps x children -> children x steps（不同步长度时对齐到已有的步数）
-        max_children = max(len(row) for row in child_matrix)
-        # 为每个 child 索引收集该 child 在每个记录步的值（若该步无该 child，置为 None 并跳过）
-        per_child_series: List[List[float]] = [[] for _ in range(max_children)]
-        per_child_iters: List[List[int]] = [[] for _ in range(max_children)]
-        for step_idx, vec in enumerate(child_matrix):
-            for child_idx in range(len(vec)):
-                per_child_series[child_idx].append(vec[child_idx])
-                per_child_iters[child_idx].append(iters[step_idx])
-
-        for child_idx in range(max_children):
-            if not per_child_series[child_idx]:
-                continue
-            y = per_child_series[child_idx]
-            x = per_child_iters[child_idx]
-            if smooth and smooth > 1:
-                y = moving_average(y, smooth)
-            plt.plot(x, y, alpha=0.35, linewidth=0.9)
+    if only_archive_fitness:
+        iters, arch_mat = extract_archive_matrix(records)
+        if arch_mat:
+            max_slots = max(len(row) for row in arch_mat)
+            per_series: List[List[float]] = [[] for _ in range(max_slots)]
+            per_iters: List[List[int]] = [[] for _ in range(max_slots)]
+            for step_idx, vec in enumerate(arch_mat):
+                for slot in range(len(vec)):
+                    per_series[slot].append(vec[slot])
+                    per_iters[slot].append(iters[step_idx])
+            for slot in range(max_slots):
+                if not per_series[slot]:
+                    continue
+                y = per_series[slot]
+                x = per_iters[slot]
+                if smooth and smooth > 1:
+                    y = moving_average(y, smooth)
+                plt.plot(x, y, alpha=0.35, linewidth=0.9)
+    else:
+        # 默认：画子代曲线 + 叠加均值/最大值
+        iters, child_matrix = extract_child_matrix(records)
+        if child_matrix:
+            max_children = max(len(row) for row in child_matrix)
+            per_child_series: List[List[float]] = [[] for _ in range(max_children)]
+            per_child_iters: List[List[int]] = [[] for _ in range(max_children)]
+            for step_idx, vec in enumerate(child_matrix):
+                for child_idx in range(len(vec)):
+                    per_child_series[child_idx].append(vec[child_idx])
+                    per_child_iters[child_idx].append(iters[step_idx])
+            for child_idx in range(max_children):
+                if not per_child_series[child_idx]:
+                    continue
+                y = per_child_series[child_idx]
+                x = per_child_iters[child_idx]
+                if smooth and smooth > 1:
+                    y = moving_average(y, smooth)
+                plt.plot(x, y, alpha=0.35, linewidth=0.9)
 
     # 叠加均值/最大值（若存在）
-    xs = [int(r.get("iteration", i)) for i, r in enumerate(records)]
-    child_mean = [float(r.get("child_mean")) for r in records if "child_mean" in r]
-    if len(child_mean) == len(xs):
-        y = moving_average(child_mean, smooth) if smooth and smooth > 1 else child_mean
-        plt.plot(xs, y, color="black", linewidth=2.0, label="child_mean")
+    if not only_archive_fitness:
+        xs = [int(r.get("iteration", i)) for i, r in enumerate(records)]
+        child_mean = [float(r.get("child_mean")) for r in records if "child_mean" in r]
+        if len(child_mean) == len(xs):
+            y = moving_average(child_mean, smooth) if smooth and smooth > 1 else child_mean
+            plt.plot(xs, y, color="black", linewidth=2.0, label="child_mean")
 
-    arch_mean = [float(r.get("archive_total_mean")) for r in records if "archive_total_mean" in r]
-    if len(arch_mean) == len(xs):
-        y = moving_average(arch_mean, smooth) if smooth and smooth > 1 else arch_mean
-        plt.plot(xs, y, color="tab:blue", linewidth=2.0, label="archive_total_mean")
+        arch_mean = [float(r.get("archive_total_mean")) for r in records if "archive_total_mean" in r]
+        if len(arch_mean) == len(xs):
+            y = moving_average(arch_mean, smooth) if smooth and smooth > 1 else arch_mean
+            plt.plot(xs, y, color="tab:blue", linewidth=2.0, label="archive_total_mean")
 
-    arch_max = [float(r.get("archive_total_max")) for r in records if "archive_total_max" in r]
-    if len(arch_max) == len(xs):
-        y = moving_average(arch_max, smooth) if smooth and smooth > 1 else arch_max
-        plt.plot(xs, y, color="tab:red", linewidth=2.0, label="archive_total_max")
+        arch_max = [float(r.get("archive_total_max")) for r in records if "archive_total_max" in r]
+        if len(arch_max) == len(xs):
+            y = moving_average(arch_max, smooth) if smooth and smooth > 1 else arch_max
+            plt.plot(xs, y, color="tab:red", linewidth=2.0, label="archive_total_max")
 
     plt.xlabel("iteration")
     plt.ylabel("score")
@@ -128,11 +161,12 @@ def main():
     parser.add_argument("inputs", nargs="+", help="一个或多个 JSONL 文件")
     parser.add_argument("--outdir", default="results/fitness_logs/plots", help="输出目录")
     parser.add_argument("--smooth", type=int, default=1, help="滑动平均窗口，>1 启用平滑")
+    parser.add_argument("--only_archive_fitness", action="store_true", help="仅绘制全部 archive_fitness 曲线")
     args = parser.parse_args()
 
     outs = []
     for p in args.inputs:
-        outs.append(plot_file(p, args.outdir, args.smooth))
+        outs.append(plot_file(p, args.outdir, args.smooth, args.only_archive_fitness))
     print("Saved:")
     for o in outs:
         print(o)
