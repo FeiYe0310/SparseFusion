@@ -23,6 +23,20 @@ def read_jsonl(path: str) -> List[Dict[str, Any]]:
     return records
 
 
+def normalize_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 iteration 排序，并对重复 iteration 仅保留“最后一次”。
+    若记录缺少 iteration，暂不纳入排序（这些记录通常不会用于绘图关键字段）。
+    """
+    last_by_iter: Dict[int, Dict[str, Any]] = {}
+    for r in records:
+        it = r.get("iteration")
+        if isinstance(it, int):
+            last_by_iter[it] = r  # 后出现的覆盖前面的
+    if not last_by_iter:
+        return records
+    return [last_by_iter[it] for it in sorted(last_by_iter.keys())]
+
+
 def moving_average(series: List[float], window: int) -> List[float]:
     if window <= 1:
         return series
@@ -77,6 +91,8 @@ def extract_archive_matrix(records: List[Dict[str, Any]]) -> (List[int], List[Li
 
 def plot_file(path: str, outdir: str, smooth: int, only_archive_fitness: bool = False) -> str:
     records = read_jsonl(path)
+    # 归一：排序 + 去重（保留同一 iteration 的最后一次）
+    records = normalize_records(records)
     if not records:
         raise RuntimeError(f"Empty or invalid JSONL: {path}")
 
