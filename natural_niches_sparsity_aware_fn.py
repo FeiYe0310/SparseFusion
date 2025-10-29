@@ -722,7 +722,7 @@ def create_evaluation_fn_for_llm(
                         gen_slice,
                         skip_special_tokens=True,
                     )
-                except TypeError:
+                except Exception:
                     generated_texts = []
                     for row in gen_slice:
                         row_ids = row.tolist()
@@ -2251,7 +2251,7 @@ def create_bfcl_evaluation_fn(
                         gen_slice,
                         skip_special_tokens=True
                     )
-                except TypeError:
+                except Exception:
                     generated_texts = []
                     for row in gen_slice:
                         row_ids = row.tolist()
@@ -2515,7 +2515,7 @@ def create_mbpp_evaluation_fn(
                         gen_slice,
                         skip_special_tokens=True
                     )
-                except TypeError:
+                except Exception:
                     # 退化路径：逐条解码并再次兜底
                     generated_codes = []
                     for row in gen_slice:
@@ -2843,7 +2843,7 @@ def create_dot_eval_fn(
                         gen_slice,
                         skip_special_tokens=True
                     )
-                except TypeError:
+                except Exception:
                     gen_txts = []
                     for row in gen_slice:
                         row_ids = row.tolist()
