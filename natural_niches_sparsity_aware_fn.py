@@ -992,6 +992,12 @@ def run_natural_niches_sparsity_aware(
     mult4_weight: float = 0.0,
     mult5_weight: float = 0.0,
     bool_weight: float = 0.0,
+    # DoT mult4 few-shot chat
+    mult4_qwen_chat: bool = False,
+    mult4_few_shot_k: int = 3,
+    # DoT bool few-shot chat
+    bool_qwen_chat: bool = False,
+    bool_few_shot_k: int = 3,
     save_best_model: bool = True,
 ) -> list:
     """
@@ -1272,6 +1278,10 @@ def run_natural_niches_sparsity_aware(
             gsm8k_qwen_chat=gsm8k_qwen_chat,
             gsm8k_few_shot_k=gsm8k_few_shot_k,
             gsm8k_few_shot_dataset=gsm8k_fewshot_pool,
+            mult4_qwen_chat=mult4_qwen_chat,
+            mult4_few_shot_k=mult4_few_shot_k,
+            bool_qwen_chat=bool_qwen_chat,
+            bool_few_shot_k=bool_few_shot_k,
         )
 
         # Test evaluation: GSM8K only (for compatibility)
@@ -2598,6 +2608,10 @@ def create_multi_task_evaluation_fn(
     gsm8k_qwen_chat: bool = False,
     gsm8k_few_shot_k: int = 3,
     gsm8k_few_shot_dataset=None,
+    mult4_qwen_chat: bool = False,
+    mult4_few_shot_k: int = 3,
+    bool_qwen_chat: bool = False,
+    bool_few_shot_k: int = 3,
     per_task_subset: dict | None = None,
 ):
     """
@@ -2675,9 +2689,11 @@ def create_multi_task_evaluation_fn(
     if use_mult4_eval:
         mult4_eval_fn = create_dot_eval_fn(
             model_skeleton, param_shapes, tokenizer,
-            task='mult4', num_samples=(eval_subset_size or 20),
+            task='mult4', num_samples=(per_task_subset.get("mult4") if per_task_subset else (eval_subset_size or 20)),
             batch_size=max(1, batch_size), distributed=distributed,
             world_size=world_size, rank=rank,
+            use_qwen_chat=mult4_qwen_chat,
+            few_shot_k=mult4_few_shot_k,
         )
     if use_mult5_eval:
         mult5_eval_fn = create_dot_eval_fn(
@@ -2689,9 +2705,11 @@ def create_multi_task_evaluation_fn(
     if use_bool_eval:
         bool_eval_fn = create_dot_eval_fn(
             model_skeleton, param_shapes, tokenizer,
-            task='bool', num_samples=(eval_subset_size or 20),
+            task='bool', num_samples=(per_task_subset.get("bool") if per_task_subset else (eval_subset_size or 20)),
             batch_size=max(1, batch_size), distributed=distributed,
             world_size=world_size, rank=rank,
+            use_qwen_chat=bool_qwen_chat,
+            few_shot_k=bool_few_shot_k,
         )
 
     def evaluation_fn(flat_params):
@@ -2774,6 +2792,8 @@ def create_dot_eval_fn(
     distributed: bool = False,
     world_size: int = 1,
     rank: int = 0,
+    use_qwen_chat: bool = False,
+    few_shot_k: int = 3,
 ):
     """在线生成DoT风格任务并评估（pass@1）。"""
     import torch
@@ -2810,9 +2830,32 @@ def create_dot_eval_fn(
             batch_prompts = prompts[start:start+batch_size]
             batch_golds = golds[start:start+batch_size]
 
-            enc = dot_collate(batch_prompts, tokenizer, max_length=256)
-            input_ids = enc['input_ids'].to(device)
-            attention_mask = enc['attention_mask'].to(device)
+            if use_qwen_chat and hasattr(tokenizer, "apply_chat_template"):
+                # few-shot exemplars（固定生成，避免与当前batch重叠）
+                if task in ('mult4', 'mult5'):
+                    exemplars = generate_mult_dataset(num_samples=min(max(0, int(few_shot_k)), 8), digits=(4 if task=='mult4' else 5), seed=4242)
+                elif task == 'bool':
+                    exemplars = generate_bool_dataset(num_samples=min(max(0, int(few_shot_k)), 8), seed=4242)
+                else:
+                    exemplars = []
+                texts = []
+                for q in batch_prompts:
+                    msgs = [
+                        {"role": "system", "content": "You are a helpful math assistant. Output only the final integer answer."}
+                    ]
+                    for ex in exemplars:
+                        msgs.append({"role": "user", "content": ex['prompt']})
+                        msgs.append({"role": "assistant", "content": str(ex['gold'])})
+                    msgs.append({"role": "user", "content": q})
+                    text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+                    texts.append(text)
+                enc = tokenizer(texts, padding=True, truncation=True, max_length=256, return_tensors="pt")
+                input_ids = enc["input_ids"].to(device)
+                attention_mask = enc["attention_mask"].to(device)
+            else:
+                enc = dot_collate(batch_prompts, tokenizer, max_length=256)
+                input_ids = enc['input_ids'].to(device)
+                attention_mask = enc['attention_mask'].to(device)
 
             with torch.no_grad():
                 gen_ids = restored_model.generate(

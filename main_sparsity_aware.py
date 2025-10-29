@@ -123,6 +123,16 @@ def parse_arguments():
                         help="Weight for 5x5 multiplication in multi-task")
     parser.add_argument("--bool_weight", type=float, default=0.0,
                         help="Weight for Boolean logic in multi-task")
+    # DoT mult4: Qwen chat few-shot (optional)
+    parser.add_argument("--mult4_qwen_chat", action="store_true",
+                        help="Use Qwen chat template with few-shot for mult4 prompts")
+    parser.add_argument("--mult4_few_shot_k", type=int, default=3,
+                        help="Few-shot exemplars used for mult4 when --mult4_qwen_chat is set")
+    # DoT bool: Qwen chat few-shot (optional)
+    parser.add_argument("--bool_qwen_chat", action="store_true",
+                        help="Use Qwen chat template with few-shot for boolean prompts")
+    parser.add_argument("--bool_few_shot_k", type=int, default=3,
+                        help="Few-shot exemplars used for boolean when --bool_qwen_chat is set")
     
     # 🔄 动态稀疏度调度参数（Cosine Annealing with Warm Restarts）
     parser.add_argument("--use_dynamic_sparsity", action="store_true",
@@ -164,10 +174,14 @@ def main():
         print(f"🎯 DoT-style tasks:")
         if args.use_mult4_eval:
             print(f"  4x4 Mult. weight: {args.mult4_weight}")
+            if args.mult4_qwen_chat:
+                print(f"  4x4 Mult. prompting: Qwen chat with {args.mult4_few_shot_k}-shot")
         if args.use_mult5_eval:
             print(f"  5x5 Mult. weight: {args.mult5_weight}")
         if args.use_bool_eval:
             print(f"  Boolean Logic weight: {args.bool_weight}")
+            if args.bool_qwen_chat:
+                print(f"  Boolean prompting: Qwen chat with {args.bool_few_shot_k}-shot")
     print(f"\nSparsity-Aware Parameters:")
     print(f"  ω (omega): {args.omega} - Fitness weight")
     print(f"  β (beta): {args.beta} - Sparsity weight")
@@ -248,6 +262,10 @@ def main():
         mult4_weight=args.mult4_weight,
         mult5_weight=args.mult5_weight,
         bool_weight=args.bool_weight,
+        mult4_qwen_chat=args.mult4_qwen_chat,
+        mult4_few_shot_k=args.mult4_few_shot_k,
+        bool_qwen_chat=args.bool_qwen_chat,
+        bool_few_shot_k=args.bool_few_shot_k,
         # 🔄 动态稀疏度参数
         use_dynamic_sparsity=args.use_dynamic_sparsity,
         sparsity_min=args.sparsity_min,
@@ -306,6 +324,42 @@ def main():
     
     # Save as pickle (complete data for analysis)
     pkl_path = os.path.join(args.output_dir, base_filename + ".pkl")
+    with open(pkl_path, "wb") as f:
+        pickle.dump(results, f)
+    print(f"\n✅ Results (pickle) saved to: {pkl_path}")
+    
+    # Save as JSON (human-readable logs)
+    import json
+    json_path = os.path.join(args.output_dir, base_filename + ".json")
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"✅ Results (JSON) saved to: {json_path}")
+    
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
+
+
+    with open(pkl_path, "wb") as f:
+        pickle.dump(results, f)
+    print(f"\n✅ Results (pickle) saved to: {pkl_path}")
+    
+    # Save as JSON (human-readable logs)
+    import json
+    json_path = os.path.join(args.output_dir, base_filename + ".json")
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"✅ Results (JSON) saved to: {json_path}")
+    
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
+
+
     with open(pkl_path, "wb") as f:
         pickle.dump(results, f)
     print(f"\n✅ Results (pickle) saved to: {pkl_path}")
