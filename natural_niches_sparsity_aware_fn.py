@@ -31,6 +31,7 @@ from contextlib import nullcontext
 import os
 import json
 import random
+import time
 
 # Selection profiling (module-level cache)
 _last_select_profile = None
