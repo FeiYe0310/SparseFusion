@@ -1024,6 +1024,7 @@ def run_natural_niches_sparsity_aware(
 
     其他参数与原始run_natural_niches相同。
     """
+    import time
     archive_backend = archive_backend.lower()
     if archive_backend not in {"gpu", "cpu"}:
         raise ValueError("archive_backend must be 'gpu' or 'cpu'")
@@ -1053,6 +1054,8 @@ def run_natural_niches_sparsity_aware(
 
     is_main_process = rank == 0
     dist_enabled = distributed and world_size > 1
+    # 可选耗时打印开关：设置环境变量 TIME_PROFILE=1 开启
+    time_profile_enabled = os.environ.get("TIME_PROFILE", "0") == "1"
 
     # --- LLM & Data Loading (IDENTICAL TO ORIGINAL) ---
     if is_main_process:
@@ -1525,6 +1528,8 @@ def run_natural_niches_sparsity_aware(
             )
 
             for i in progress_bar:
+                iter_t0 = time.time() if (is_main_process and time_profile_enabled) else None
+                t_select = t_prune = t_crossover = t_mutate = t_broadcast = t_eval = t_archive = t_log = 0.0
                 k1, k2, k3, key = jax.random.split(key, 4)
                 shard_owner = None
                 if async_coordinator is not None:
@@ -1532,9 +1537,7 @@ def run_natural_niches_sparsity_aware(
 
                 # --- Child Generation (Main Process Only) ---
                 if is_main_process:
-                    # Monitor JAX computation time to detect hangs
-                    import time
-
+                    # 1) 父母选择（含JAX计算）
                     start_time = time.time()
 
                     # 1. Select parents based on Total Score
@@ -1559,6 +1562,8 @@ def run_natural_niches_sparsity_aware(
 
                     # Check if JAX computation is taking too long
                     jax_time = time.time() - start_time
+                    if time_profile_enabled:
+                        t_select = jax_time
                     if jax_time > 60:  # Warning if JAX computation takes >60 seconds
                         print(
                             f"⚠️  WARNING: JAX parent selection took {jax_time:.1f}s (may cause timeout)"
@@ -1567,6 +1572,7 @@ def run_natural_niches_sparsity_aware(
                     # 2. Apply pruning to parents (NEW)
                     # 使用PyTorch+NumPy的剪枝方案（已修复bfloat16问题）
                     if enable_pruning:
+                        prune_t0 = time.time() if time_profile_enabled else None
                         # 🔄 动态计算当前迭代的稀疏度
                         if use_dynamic_sparsity:
                             current_pruning_sparsity = calculate_dynamic_sparsity(
@@ -1615,8 +1621,11 @@ def run_natural_niches_sparsity_aware(
                         except Exception as e:
                             print(f"⚠️  Pruning failed at iteration {i}: {e}")
                             # Continue without pruning
+                        if time_profile_enabled and prune_t0 is not None:
+                            t_prune = time.time() - prune_t0
 
-                    # 3. Crossover
+                    # 3) 交叉
+                    cross_t0 = time.time() if time_profile_enabled else None
                     if use_crossover:
                         if use_splitpoint:
                             child_f32 = crossover(parents_f32, k2)
@@ -1624,9 +1633,14 @@ def run_natural_niches_sparsity_aware(
                             child_f32 = crossover_without_splitpoint(parents_f32, k2)
                     else:
                         child_f32 = parents_f32[0]
+                    if time_profile_enabled and cross_t0 is not None:
+                        t_crossover = time.time() - cross_t0
 
-                    # 4. Mutation
+                    # 4) 变异
+                    mutate_t0 = time.time() if time_profile_enabled else None
                     child_f32 = mutate(child_f32, k3)
+                    if time_profile_enabled and mutate_t0 is not None:
+                        t_mutate = time.time() - mutate_t0
                     child_bf16_main = child_f32.astype(jnp.bfloat16)
                     if async_coordinator is not None and shard_owner is not None:
                         child_bf16_main = async_coordinator.prepare_candidate(
@@ -1642,6 +1656,7 @@ def run_natural_niches_sparsity_aware(
 
                 # --- Broadcast Child (IDENTICAL TO ORIGINAL) ---
                 if dist_enabled:
+                    bcast_t0 = time.time() if (is_main_process and time_profile_enabled) else None
                     if is_main_process:
                         child_tensor = torch.from_numpy(
                             np.array(child_bf16_main.astype(jnp.float32))
@@ -1655,14 +1670,20 @@ def run_natural_niches_sparsity_aware(
                     # Move back to CPU for numpy conversion
                     child_tensor = child_tensor.cpu()
                     child_bf16 = jnp.array(child_tensor.numpy()).astype(jnp.bfloat16)
+                    if is_main_process and time_profile_enabled and bcast_t0 is not None:
+                        t_broadcast = time.time() - bcast_t0
                 else:
                     child_bf16 = child_bf16_main
 
                 # --- Evaluation (All Processes) ---
+                eval_t0 = time.time() if (is_main_process and time_profile_enabled) else None
                 score = train_eval_fn(child_bf16)
+                if is_main_process and time_profile_enabled and eval_t0 is not None:
+                    t_eval = time.time() - eval_t0
 
                 # --- Archive Update (Main Process Only) ---
                 if is_main_process:
+                    arch_t0 = time.time() if time_profile_enabled else None
                     archive, scores = update_archive_fn(
                         score,
                         child_bf16,
@@ -1681,11 +1702,14 @@ def run_natural_niches_sparsity_aware(
                             archive = _apply_async_sync_to_matrix(
                                 archive, async_coordinator
                             )
+                    if time_profile_enabled and arch_t0 is not None:
+                        t_archive = time.time() - arch_t0
 
                     # Record iteration statistics (every 10 steps to reduce overhead)
                     if (i + 1) % 10 == 0:
                         # Append per-10-steps evolution metrics to a single JSONL (file named by key params, no run)
                         if is_main_process:
+                            log_t0 = time.time() if time_profile_enabled else None
                             try:
                                 archive_fitness_vals = jnp.mean(scores, axis=1)
                                 archive_total_scores = compute_total_scores(
@@ -1739,6 +1763,8 @@ def run_natural_niches_sparsity_aware(
                                 jsonl_path = os.path.join(log_dir, jsonl_name)
                                 with open(jsonl_path, "a", encoding="utf-8") as f:
                                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                                if time_profile_enabled and log_t0 is not None:
+                                    t_log += (time.time() - log_t0)
                             except Exception:
                                 pass
                         # Compute all archive statistics efficiently
@@ -1808,6 +1834,15 @@ def run_natural_niches_sparsity_aware(
                                 )
                             except Exception:
                                 pass
+
+                # 迭代耗时打印（仅主进程，开启 TIME_PROFILE=1 生效）
+                if is_main_process and time_profile_enabled and iter_t0 is not None:
+                    t_total = time.time() - iter_t0
+                    print(
+                        f"[TimeProfile][iter {i+1}] select={t_select:.3f}s prune={t_prune:.3f}s "
+                        f"crossover={t_crossover:.3f}s mutate={t_mutate:.3f}s broadcast={t_broadcast:.3f}s "
+                        f"eval={t_eval:.3f}s archive={t_archive:.3f}s log={t_log:.3f}s total={t_total:.3f}s"
+                    )
 
                 # --- GPU Memory Cleanup (Every 100 steps to prevent memory leak) ---
                 if (i + 1) % 100 == 0:
