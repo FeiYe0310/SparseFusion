@@ -32,6 +32,9 @@ import os
 import json
 import random
 
+# Selection profiling (module-level cache)
+_last_select_profile = None
+
 # Add current directory to path for importing lib/ module
 # This ensures the code is portable across different environments
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -835,36 +838,72 @@ def sample_parents_with_sparsity(
     """
     k1, k2 = jax.random.split(rand_key)
 
-    # 计算Total Score
+    # 细粒度耗时统计
+    do_profile = os.environ.get("TIME_PROFILE", "0") == "1"
+    prof = {"path": ("matchmaker" if use_matchmaker else "simple")}
+    t0 = time.time() if do_profile else None
+
+    # 1) 计算Total Score
     total_scores = compute_total_scores(
         archive, scores, omega, beta, tau, alpha, num_tasks, epsilon
     )
+    if do_profile:
+        try:
+            jax.block_until_ready(total_scores)
+        except Exception:
+            pass
+        prof["total_scores"] = time.time() - t0
+        t0 = time.time()
 
-    # 归一化为概率
+    # 2) 概率归一化
     probs = total_scores / jnp.sum(total_scores)
+    if do_profile:
+        try:
+            jax.block_until_ready(probs)
+        except Exception:
+            pass
+        prof["probs_norm"] = time.time() - t0
+        t0 = time.time()
 
-    # 第一个父代
+    # 3) 抽样父母
     if use_matchmaker:
-        parent_1_idx = jax.random.choice(k1, probs.size, shape=(1,), p=probs)[0]
+        # 3a) 抽样第一个父母
+        p1_arr = jax.random.choice(k1, probs.size, shape=(1,), p=probs)
+        parent_1_idx = int(p1_arr[0])
+        if do_profile:
+            prof["parent1_sample"] = time.time() - t0
+            t0 = time.time()
 
-        # 第二个父代：基于与第一个父代的互补性
-        # 计算每个个体与parent_1在各任务上的互补得分
+        # 3b) 互补性矩阵与分数
         z = scores.sum(axis=0)
         z = jnp.where(z, z, 1) ** alpha
         fitness_matrix = scores.astype(jnp.float32) / z[None, :]
-
         match_score = jnp.maximum(
             0, fitness_matrix - fitness_matrix[parent_1_idx, :]
         ).sum(axis=1)
+        if do_profile:
+            try:
+                jax.block_until_ready(match_score)
+            except Exception:
+                pass
+            prof["complement_score"] = time.time() - t0
+            t0 = time.time()
 
+        # 3c) 互补性概率与第二个父母抽样
         match_probs = match_score / jnp.sum(match_score)
-        parent_2_idx = jax.random.choice(
-            k2, match_probs.size, shape=(1,), p=match_probs
-        )[0]
+        p2_arr = jax.random.choice(k2, match_probs.size, shape=(1,), p=match_probs)
+        parent_2_idx = int(p2_arr[0])
+        if do_profile:
+            prof["match_probs"] = time.time() - t0
     else:
-        parent_2_idx, parent_1_idx = jax.random.choice(
-            k1, probs.size, shape=(2,), p=probs
-        )
+        two_arr = jax.random.choice(k1, probs.size, shape=(2,), p=probs)
+        parent_2_idx, parent_1_idx = int(two_arr[0]), int(two_arr[1])
+        if do_profile:
+            prof["two_sample"] = time.time() - t0
+
+    if do_profile:
+        global _last_select_profile
+        _last_select_profile = prof
     # 返回父代参数以及其索引，便于记录谱系
     return archive[parent_1_idx], archive[parent_2_idx], int(parent_1_idx), int(parent_2_idx)
 
@@ -1568,6 +1607,24 @@ def run_natural_niches_sparsity_aware(
                         print(
                             f"⚠️  WARNING: JAX parent selection took {jax_time:.1f}s (may cause timeout)"
                         )
+                    # 细粒度选择阶段耗时打印
+                    if time_profile_enabled:
+                        try:
+                            prof = _last_select_profile if '_last_select_profile' in globals() else None
+                            if prof:
+                                if prof.get('path') == 'matchmaker':
+                                    print(
+                                        f"[SelectProfile][iter {i+1}] total_scores={prof.get('total_scores', 0):.3f}s "
+                                        f"norm={prof.get('probs_norm', 0):.3f}s p1_sample={prof.get('parent1_sample', 0):.3f}s "
+                                        f"complement={prof.get('complement_score', 0):.3f}s match_probs={prof.get('match_probs', 0):.3f}s"
+                                    )
+                                else:
+                                    print(
+                                        f"[SelectProfile][iter {i+1}] total_scores={prof.get('total_scores', 0):.3f}s "
+                                        f"norm={prof.get('probs_norm', 0):.3f}s two_sample={prof.get('two_sample', 0):.3f}s"
+                                    )
+                        except Exception:
+                            pass
 
                     # 2. Apply pruning to parents (NEW)
                     # 使用PyTorch+NumPy的剪枝方案（已修复bfloat16问题）
@@ -1715,6 +1772,22 @@ def run_natural_niches_sparsity_aware(
                                 archive_total_scores = compute_total_scores(
                                     archive, scores, omega, beta, tau, alpha, num_tasks, epsilon
                                 )
+                                # 读取多任务评估的按任务均值（若可用）
+                                gsm8k_acc = None
+                                mbpp_acc = None
+                                gsm8k_n = None
+                                mbpp_n = None
+                                try:
+                                    if hasattr(train_eval_fn, 'last_task_scores'):
+                                        lts = getattr(train_eval_fn, 'last_task_scores') or {}
+                                        gsm8k_acc = float(lts.get('GSM8K')) if lts.get('GSM8K') is not None else None
+                                        mbpp_acc = float(lts.get('MBPP')) if lts.get('MBPP') is not None else None
+                                    if hasattr(train_eval_fn, 'last_task_counts'):
+                                        ltc = getattr(train_eval_fn, 'last_task_counts') or {}
+                                        gsm8k_n = int(ltc.get('GSM8K')) if ltc.get('GSM8K') is not None else None
+                                        mbpp_n = int(ltc.get('MBPP')) if ltc.get('MBPP') is not None else None
+                                except Exception:
+                                    pass
                                 record = {
                                     "iteration": int(i + 1),
                                     "pop_size": int(pop_size),
@@ -1741,6 +1814,11 @@ def run_natural_niches_sparsity_aware(
                                     "eval_subset_size_mbpp": int(eval_subset_size_mbpp) if eval_subset_size_mbpp is not None else None,
                                     "gsm8k_weight": float(gsm8k_weight),
                                     "mbpp_weight": float(mbpp_weight),
+                                    # 每任务准确率（若可用）
+                                    "gsm8k_acc": gsm8k_acc,
+                                    "mbpp_acc": mbpp_acc,
+                                    "gsm8k_n": gsm8k_n,
+                                    "mbpp_n": mbpp_n,
                                 }
                                 log_dir = os.path.join(RESULTS_DIR, "fitness_logs")
                                 os.makedirs(log_dir, exist_ok=True)
@@ -1767,6 +1845,17 @@ def run_natural_niches_sparsity_aware(
                                     t_log += (time.time() - log_t0)
                             except Exception:
                                 pass
+                        # 控制台打印（可选）每10步 GSM8K/MBPP 准确率
+                        try:
+                            if is_main_process:
+                                lts = getattr(train_eval_fn, 'last_task_scores', {})
+                                gacc = lts.get('GSM8K')
+                                macc = lts.get('MBPP')
+                                if gacc is not None or macc is not None:
+                                    print(f"[Iter {i+1}] GSM8K acc={gacc if gacc is not None else 'NA'} | MBPP acc={macc if macc is not None else 'NA'}")
+                        except Exception:
+                            pass
+
                         # Compute all archive statistics efficiently
                         archive_fitness_vals = jnp.mean(scores, axis=1)
                         archive_sparsity_vals = jnp.array(
@@ -2799,6 +2888,17 @@ def create_multi_task_evaluation_fn(
             task_scores['Boolean'] = float(jnp.mean(bool_scores))
             scores_list.append(bool_scores)
         
+        # 将本轮各任务均值缓存到函数属性，便于上层读取并记录
+        try:
+            evaluation_fn.last_task_scores = dict(task_scores)
+            evaluation_fn.last_task_counts = {
+                'GSM8K': int(len(gsm8k_scores)) if 'GSM8K' in task_scores else 0,
+                'MBPP': int(len(mbpp_scores)) if 'MBPP' in task_scores else 0,
+            }
+        except Exception:
+            # 保障不影响主流程
+            pass
+
         # 打印任务性能统计（受 VERBOSE_EVAL 控制）
         if rank == 0 and os.environ.get("VERBOSE_EVAL", "0") == "1":
             print(f"\n{'='*70}")
