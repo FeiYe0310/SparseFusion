@@ -1,6 +1,8 @@
 import os
 
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
+# Respect external setting; default to CPU only if not provided by launcher
+if "JAX_PLATFORM_NAME" not in os.environ:
+    os.environ["JAX_PLATFORM_NAME"] = "cpu"
 import pickle
 import argparse
 
