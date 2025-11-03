@@ -535,7 +535,7 @@ def create_evaluation_fn_for_llm(
     param_shapes: list,
     tokenized_dataset,
     tokenizer: AutoTokenizer,
-    batch_size: int = 4,
+    batch_size: int = 16,
     distributed: bool = False,
     world_size: int = 1,
     rank: int = 0,
