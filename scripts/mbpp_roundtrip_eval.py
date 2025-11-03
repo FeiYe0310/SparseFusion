@@ -25,7 +25,7 @@ from helper_fn import (
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
 )
-from mbpp_data_utils import MBPPDataset, mbpp_collate_fn
+from utils.eval_utils import MBPPDataset, mbpp_collate_fn
 
 
 def safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
@@ -195,8 +195,7 @@ def evaluate_mbpp_with_model(
     samples = []
 
     with torch.no_grad():
-        for batch in loader:
-            # Gather batch metadata first (needed by prompt builders)
+        for batch in loader:            # Gather batch metadata first (needed by prompt builders)
             tests_list = batch["test_list"]
             setup_codes = batch["test_setup_code"]
             imports_codes = batch.get("test_imports", [""] * len(setup_codes))

@@ -1,0 +1,871 @@
+"""
+BFCL评估工具
+包含Function Call解析、验证和评估功能
+"""
+
+import re
+import json
+from typing import Dict, Any, Optional, Union
+
+
+def extract_function_call(text: str) -> Dict[str, Any]:
+    """
+    从模型生成的文本中提取function call
+    
+    支持多种格式：
+    1. JSON格式: {"name": "func", "arguments": {...}}
+    2. 函数调用格式: func_name(arg1=val1, arg2=val2)
+    3. 纯JSON格式: {"function": "func", "parameters": {...}}
+    
+    Args:
+        text: 模型生成的文本
+        
+    Returns:
+        标准化的function call字典: {"name": str, "arguments": dict}
+        如果解析失败，返回 {"name": None, "arguments": {}}
+    
+    Examples:
+        >>> extract_function_call('{"name": "get_weather", "arguments": {"location": "Beijing"}}')
+        {'name': 'get_weather', 'arguments': {'location': 'Beijing'}}
+        
+        >>> extract_function_call('get_weather(location="Beijing", unit="celsius")')
+        {'name': 'get_weather', 'arguments': {'location': 'Beijing', 'unit': 'celsius'}}
+    """
+    text = text.strip()
+    
+    # 方法1: 尝试直接解析JSON格式
+    try:
+        # 提取第一个完整的JSON对象
+        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group()
+            data = json.loads(json_str)
+            
+            # 标准化字段名
+            if "name" in data and "arguments" in data:
+                return {"name": data["name"], "arguments": data["arguments"]}
+            elif "function" in data and "parameters" in data:
+                return {"name": data["function"], "arguments": data["parameters"]}
+            elif "name" in data and "parameters" in data:
+                return {"name": data["name"], "arguments": data["parameters"]}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+    
+    # 方法2: 解析函数调用格式 func_name(arg1=val1, arg2=val2)
+    func_call_match = re.search(r'(\w+)\s*\((.*?)\)', text, re.DOTALL)
+    if func_call_match:
+        func_name = func_call_match.group(1)
+        args_str = func_call_match.group(2).strip()
+        
+        # 解析参数
+        args = {}
+        if args_str:
+            # 分割参数（处理逗号分隔）
+            # 注意：这里简化处理，不处理嵌套的逗号
+            arg_pattern = r'(\w+)\s*[:=]\s*([^,]+)'
+            for match in re.finditer(arg_pattern, args_str):
+                key = match.group(1).strip()
+                value_str = match.group(2).strip()
+                
+                # 尝试解析值
+                try:
+                    # 去除引号
+                    if (value_str.startswith('"') and value_str.endswith('"')) or \
+                       (value_str.startswith("'") and value_str.endswith("'")):
+                        value = value_str[1:-1]
+                    # 尝试转换为数字
+                    elif '.' in value_str:
+                        value = float(value_str)
+                    elif value_str.isdigit() or (value_str.startswith('-') and value_str[1:].isdigit()):
+                        value = int(value_str)
+                    # 布尔值
+                    elif value_str.lower() == 'true':
+                        value = True
+                    elif value_str.lower() == 'false':
+                        value = False
+                    # null/None
+                    elif value_str.lower() in ('null', 'none'):
+                        value = None
+                    else:
+                        value = value_str
+                    
+                    args[key] = value
+                except (ValueError, AttributeError):
+                    args[key] = value_str
+        
+        return {"name": func_name, "arguments": args}
+    
+    # 方法3: 提取可能的函数名（作为fallback）
+    func_name_match = re.search(r'(?:function|call|invoke)[\s:]+(\w+)', text, re.IGNORECASE)
+    if func_name_match:
+        return {"name": func_name_match.group(1), "arguments": {}}
+    
+    # 解析失败
+    return {"name": None, "arguments": {}}
+
+
+def evaluate_function_call(
+    pred_call: Dict[str, Any],
+    gt_call: Dict[str, Any],
+    strict: bool = True
+) -> float:
+    """
+    评估function call的准确性
+    
+    评估标准（基于BFCL AST Match）:
+    1. 函数名必须完全匹配
+    2. 所有必需参数必须存在
+    3. 参数值必须匹配（支持类型转换）
+    4. 可选：参数顺序无关
+    
+    Args:
+        pred_call: 预测的function call
+        gt_call: ground truth function call
+        strict: 是否严格模式（要求所有参数完全匹配，包括可选参数）
+        
+    Returns:
+        score: 1.0 (完全正确) 或 0.0 (错误)
+        
+    Examples:
+        >>> pred = {"name": "get_weather", "arguments": {"location": "Beijing"}}
+        >>> gt = {"name": "get_weather", "arguments": {"location": "Beijing"}}
+        >>> evaluate_function_call(pred, gt)
+        1.0
+        
+        >>> pred = {"name": "wrong_func", "arguments": {"location": "Beijing"}}
+        >>> evaluate_function_call(pred, gt)
+        0.0
+    """
+    # 1. 检查函数名
+    pred_name = pred.get("name")
+    gt_name = gt.get("name")
+    
+    if pred_name is None or pred_name != gt_name:
+        return 0.0
+    
+    # 2. 检查参数
+    pred_args = pred.get("arguments", {})
+    gt_args = gt.get("arguments", {})
+    
+    # 严格模式：参数数量必须一致
+    if strict and len(pred_args) != len(gt_args):
+        return 0.0
+    
+    # 非严格模式：只要求ground truth中的参数都存在
+    for key, gt_val in gt_args.items():
+        if key not in pred_args:
+            return 0.0
+        
+        pred_val = pred_args[key]
+        
+        # 值比较（支持类型转换）
+        if not _values_match(pred_val, gt_val):
+            return 0.0
+    
+    # 严格模式：检查是否有多余的参数
+    if strict:
+        for key in pred_args:
+            if key not in gt_args:
+                return 0.0
+    
+    return 1.0
+
+
+def _values_match(pred_val: Any, gt_val: Any, tolerance: float = 1e-6) -> bool:
+    """
+    比较两个值是否匹配（支持类型转换和数值容差）
+    
+    Args:
+        pred_val: 预测值
+        gt_val: ground truth值
+        tolerance: 数值比较的容差
+        
+    Returns:
+        是否匹配
+    """
+    # 类型完全相同的情况
+    if type(pred_val) == type(gt_val):
+        if isinstance(gt_val, (int, float)):
+            return abs(pred_val - gt_val) <= tolerance
+        else:
+            return pred_val == gt_val
+    
+    # 数值类型的比较（int vs float）
+    if isinstance(pred_val, (int, float)) and isinstance(gt_val, (int, float)):
+        return abs(float(pred_val) - float(gt_val)) <= tolerance
+    
+    # 字符串比较（忽略大小写和首尾空格）
+    if isinstance(pred_val, str) and isinstance(gt_val, str):
+        return pred_val.strip().lower() == gt_val.strip().lower()
+    
+    # 字符串与数字的转换
+    if isinstance(pred_val, str) and isinstance(gt_val, (int, float)):
+        try:
+            return abs(float(pred_val) - float(gt_val)) <= tolerance
+        except ValueError:
+            return False
+    
+    if isinstance(pred_val, (int, float)) and isinstance(gt_val, str):
+        try:
+            return abs(float(pred_val) - float(gt_val)) <= tolerance
+        except ValueError:
+            return False
+    
+    # 其他情况：字符串化后比较
+    return str(pred_val).strip() == str(gt_val).strip()
+
+
+def batch_evaluate_bfcl(
+    predictions: list,
+    ground_truths: list,
+    strict: bool = True
+) -> Dict[str, float]:
+    """
+    批量评估BFCL任务
+    
+    Args:
+        predictions: 预测的function calls列表
+        ground_truths: ground truth function calls列表
+        strict: 是否严格模式
+        
+    Returns:
+        评估指标字典，包含:
+        - accuracy: 总体准确率
+        - correct_count: 正确数量
+        - total_count: 总数量
+        - per_sample_scores: 每个样本的得分
+    """
+    assert len(predictions) == len(ground_truths), \
+        f"Predictions and ground truths must have same length: {len(predictions)} vs {len(ground_truths)}"
+    
+    scores = []
+    for pred, gt in zip(predictions, ground_truths):
+        score = evaluate_function_call(pred, gt, strict=strict)
+        scores.append(score)
+    
+    correct_count = sum(scores)
+    total_count = len(scores)
+    accuracy = correct_count / total_count if total_count > 0 else 0.0
+    
+    return {
+        "accuracy": accuracy,
+        "correct_count": correct_count,
+        "total_count": total_count,
+        "per_sample_scores": scores
+    }
+
+
+# ========== 测试代码 ==========
+if __name__ == "__main__":
+    """测试Function Call解析和评估功能"""
+    
+    print("=" * 60)
+    print("测试 extract_function_call()")
+    print("=" * 60)
+    
+    # 测试用例1: JSON格式
+    test_cases = [
+        ('{"name": "get_weather", "arguments": {"location": "Beijing"}}', 
+         {"name": "get_weather", "arguments": {"location": "Beijing"}}),
+        
+        ('get_weather(location="Beijing", unit="celsius")',
+         {"name": "get_weather", "arguments": {"location": "Beijing", "unit": "celsius"}}),
+        
+        ('calculate_area(length=5, width=3)',
+         {"name": "calculate_area", "arguments": {"length": 5, "width": 3}}),
+        
+        ('I will call the function get_weather(location="Tokyo")',
+         {"name": "get_weather", "arguments": {"location": "Tokyo"}}),
+        
+        ('random text without function call',
+         {"name": None, "arguments": {}}),
+    ]
+    
+    for i, (text, expected) in enumerate(test_cases, 1):
+        result = extract_function_call(text)
+        status = "✓" if result == expected else "✗"
+        print(f"\n测试 {i}: {status}")
+        print(f"  输入: {text[:60]}...")
+        print(f"  预期: {expected}")
+        print(f"  实际: {result}")
+    
+    print("\n" + "=" * 60)
+    print("测试 evaluate_function_call()")
+    print("=" * 60)
+    
+    # 测试用例2: 评估
+    eval_cases = [
+        # (pred, gt, expected_score, description)
+        ({"name": "get_weather", "arguments": {"location": "Beijing"}},
+         {"name": "get_weather", "arguments": {"location": "Beijing"}},
+         1.0, "完全匹配"),
+        
+        ({"name": "wrong_func", "arguments": {"location": "Beijing"}},
+         {"name": "get_weather", "arguments": {"location": "Beijing"}},
+         0.0, "函数名错误"),
+        
+        ({"name": "calc", "arguments": {"a": 5, "b": 3}},
+         {"name": "calc", "arguments": {"a": 5, "b": 3}},
+         1.0, "数值参数匹配"),
+        
+        ({"name": "calc", "arguments": {"a": 5}},
+         {"name": "calc", "arguments": {"a": 5, "b": 3}},
+         0.0, "缺少参数"),
+        
+        ({"name": "calc", "arguments": {"a": "5", "b": "3"}},
+         {"name": "calc", "arguments": {"a": 5, "b": 3}},
+         1.0, "字符串数字转换"),
+        
+        ({"name": "send", "arguments": {"to": "JOHN@EXAMPLE.COM"}},
+         {"name": "send", "arguments": {"to": "john@example.com"}},
+         1.0, "大小写不敏感"),
+    ]
+    
+    for i, (pred, gt, expected_score, desc) in enumerate(eval_cases, 1):
+        result = evaluate_function_call(pred, gt)
+        status = "✓" if result == expected_score else "✗"
+        print(f"\n测试 {i}: {status} - {desc}")
+        print(f"  预期分数: {expected_score}")
+        print(f"  实际分数: {result}")
+    
+    print("\n" + "=" * 60)
+    print("测试 batch_evaluate_bfcl()")
+    print("=" * 60)
+    
+    predictions = [
+        {"name": "func1", "arguments": {"a": 1}},
+        {"name": "func2", "arguments": {"b": 2}},
+        {"name": "wrong", "arguments": {"c": 3}},
+    ]
+    
+    ground_truths = [
+        {"name": "func1", "arguments": {"a": 1}},
+        {"name": "func2", "arguments": {"b": 2}},
+        {"name": "func3", "arguments": {"c": 3}},
+    ]
+    
+    results = batch_evaluate_bfcl(predictions, ground_truths)
+    print(f"\n总体准确率: {results['accuracy']:.2%}")
+    print(f"正确数量: {results['correct_count']}/{results['total_count']}")
+    print(f"每个样本分数: {results['per_sample_scores']}")
+    
+    print("\n" + "=" * 60)
+    print("✅ 所有测试完成!")
+    print("=" * 60)
+
+"""
+BFCL数据加载和预处理工具
+用于Berkeley Function Calling Leaderboard数据集
+"""
+
+import json
+from typing import Dict, List, Any
+from datasets import Dataset
+from transformers import AutoTokenizer
+
+
+def format_functions(functions: List[Dict[str, Any]]) -> str:
+    """
+    将function definitions格式化为可读的文本
+    
+    Args:
+        functions: 函数定义列表
+        
+    Returns:
+        格式化后的函数描述文本
+    
+    Example:
+        Input: [{"name": "get_weather", "description": "Get weather", ...}]
+        Output: "- get_weather(location: string, unit: string): Get weather\\n..."
+    """
+    formatted_lines = []
+    
+    for func in functions:
+        func_name = func.get("name", "unknown")
+        func_desc = func.get("description", "No description")
+        
+        # 提取参数信息
+        params = func.get("parameters", {})
+        properties = params.get("properties", {})
+        required = params.get("required", [])
+        
+        # 构建参数字符串
+        param_strs = []
+        for param_name, param_info in properties.items():
+            param_type = param_info.get("type", "any")
+            is_required = " (required)" if param_name in required else " (optional)"
+            param_desc = param_info.get("description", "")
+            param_strs.append(f"{param_name}: {param_type}{is_required} - {param_desc}")
+        
+        # 格式化单个函数
+        if param_strs:
+            params_text = "\\n    ".join(param_strs)
+            formatted_lines.append(
+                f"Function: {func_name}\\n"
+                f"  Description: {func_desc}\\n"
+                f"  Parameters:\\n    {params_text}"
+            )
+        else:
+            formatted_lines.append(
+                f"Function: {func_name}\\n"
+                f"  Description: {func_desc}\\n"
+                f"  Parameters: None"
+            )
+    
+    return "\\n\\n".join(formatted_lines)
+
+
+def create_bfcl_prompt(functions: List[Dict], user_query: str, tokenizer: AutoTokenizer) -> str:
+    """
+    创建BFCL任务的prompt
+    
+    Args:
+        functions: 可用的函数列表
+        user_query: 用户查询
+        tokenizer: tokenizer（用于获取chat template）
+        
+    Returns:
+        完整的prompt文本
+    """
+    functions_text = format_functions(functions)
+    
+    # 使用chat template格式（如果模型支持）
+    if hasattr(tokenizer, 'apply_chat_template'):
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant that can call functions. "
+                    "Based on the user's request, you should call the appropriate function "
+                    "by outputting a JSON object in the format: "
+                    '{"name": "function_name", "arguments": {"arg1": "value1", "arg2": "value2"}}'
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Available functions:\\n{functions_text}\\n\\n"
+                    f"User request: {user_query}\\n\\n"
+                    f"Please call the appropriate function:"
+                )
+            }
+        ]
+        
+        try:
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+        except Exception as e:
+            # Fallback to simple format
+            prompt = (
+                f"Available functions:\\n{functions_text}\\n\\n"
+                f"User request: {user_query}\\n\\n"
+                f"Function call (JSON format):"
+            )
+    else:
+        # Simple format for models without chat template
+        prompt = (
+            f"Available functions:\\n{functions_text}\\n\\n"
+            f"User request: {user_query}\\n\\n"
+            f"Function call (JSON format):"
+        )
+    
+    return prompt
+
+
+def preprocess_bfcl_example(example: Dict[str, Any], tokenizer: AutoTokenizer, max_length: int = 512) -> Dict[str, Any]:
+    """
+    预处理单个BFCL样本
+    
+    Args:
+        example: BFCL数据样本
+        tokenizer: tokenizer
+        max_length: 最大序列长度
+        
+    Returns:
+        处理后的样本，包含input_ids, attention_mask, ground_truth
+    """
+    # 创建prompt
+    prompt = create_bfcl_prompt(
+        functions=example["functions"],
+        user_query=example["user_query"],
+        tokenizer=tokenizer
+    )
+    
+    # Tokenize
+    encoded = tokenizer(
+        prompt,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length",
+        return_tensors=None  # 返回list而不是tensor
+    )
+    
+    return {
+        "input_ids": encoded["input_ids"],
+        "attention_mask": encoded["attention_mask"],
+        "ground_truth": example["ground_truth"],
+        "id": example.get("id", "unknown")
+    }
+
+
+def load_bfcl_dataset(
+    data_path: str,
+    tokenizer: AutoTokenizer,
+    max_length: int = 512,
+    subset_size: int = None
+) -> Dataset:
+    """
+    加载和预处理BFCL数据集
+    
+    Args:
+        data_path: BFCL数据文件路径（JSON格式）
+        tokenizer: tokenizer
+        max_length: 最大序列长度
+        subset_size: 如果指定，只加载前N个样本
+        
+    Returns:
+        Hugging Face Dataset对象
+    """
+    # 加载JSON数据
+    with open(data_path, 'r', encoding='utf-8') as f:
+        raw_data = json.load(f)
+    
+    # 限制数据集大小
+    if subset_size is not None and subset_size < len(raw_data):
+        raw_data = raw_data[:subset_size]
+    
+    # 直接预处理，不使用Dataset.from_list以避免类型推断问题
+    print(f"Preprocessing {len(raw_data)} BFCL samples...")
+    tokenized_samples = []
+    for example in raw_data:
+        tokenized_sample = preprocess_bfcl_example(example, tokenizer, max_length)
+        tokenized_samples.append(tokenized_sample)
+    
+    # 从预处理后的数据创建Dataset（此时都是简单类型）
+    tokenized_dataset = Dataset.from_list(tokenized_samples)
+    
+    return tokenized_dataset
+
+
+def bfcl_collate_fn(batch: List[Dict]) -> Dict[str, Any]:
+    """
+    BFCL数据集的collate函数
+    
+    Args:
+        batch: 批次数据
+        
+    Returns:
+        整理后的批次数据
+    """
+    import torch
+    
+    # Stack input_ids and attention_mask
+    input_ids = torch.stack([torch.tensor(item["input_ids"]) for item in batch])
+    attention_mask = torch.stack([torch.tensor(item["attention_mask"]) for item in batch])
+    
+    # Keep ground_truth and id as lists
+    ground_truths = [item["ground_truth"] for item in batch]
+    ids = [item.get("id", "unknown") for item in batch]
+    
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "ground_truth": ground_truths,
+        "id": ids
+    }
+
+
+# ========== 测试代码 ==========
+if __name__ == "__main__":
+    """测试BFCL数据加载"""
+    from transformers import AutoTokenizer
+    
+    # 加载tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("models/Qwen2.5-0.5B-Instruct")
+    
+    # 测试数据路径
+    data_path = "bfcl/data/bfcl_test_simple.json"
+    
+    # 加载数据集
+    print("Loading BFCL dataset...")
+    dataset = load_bfcl_dataset(data_path, tokenizer, subset_size=5)
+    
+    print(f"✓ Dataset loaded: {len(dataset)} samples")
+    
+    # 查看第一个样本
+    sample = dataset[0]
+    print(f"\\n✓ Sample keys: {sample.keys()}")
+    print(f"✓ Input shape: {len(sample['input_ids'])}")
+    print(f"✓ Ground truth: {sample['ground_truth']}")
+    
+    # 测试collate_fn
+    from torch.utils.data import DataLoader
+    dataloader = DataLoader(dataset, batch_size=2, collate_fn=bfcl_collate_fn)
+    batch = next(iter(dataloader))
+    
+    print(f"\\n✓ Batch input_ids shape: {batch['input_ids'].shape}")
+    print(f"✓ Batch ground_truths: {batch['ground_truth']}")
+    
+    print("\\n✅ All tests passed!")
+
+#!/usr/bin/env python3
+"""
+MBPP数据加载与处理工具
+支持MBPP (Mostly Basic Python Problems)数据集的加载、预处理和批处理
+"""
+
+import os
+import json
+import torch
+from typing import Dict, List, Any
+from torch.utils.data import Dataset
+from datasets import load_dataset, load_from_disk
+
+
+class MBPPDataset(Dataset):
+    """
+    MBPP数据集类，支持从HuggingFace datasets加载或本地文件加载
+    """
+    
+    def __init__(self, data_path: str, tokenizer=None, split="test"):
+        """
+        Args:
+            data_path: MBPP数据集标识符 (如 'mbpp') 或本地文件路径
+            tokenizer: HuggingFace tokenizer
+            split: 数据集划分 ('test', 'train', 'validation')
+        """
+        self.data = self._load_data(data_path, split)
+        self.tokenizer = tokenizer
+    
+    def _load_data(self, data_path: str, split: str) -> List[Dict]:
+        """从HuggingFace datasets或本地文件加载MBPP数据"""
+        if os.path.exists(data_path):
+            # 本地路径：区分目录(HF保存的dataset)与文件(JSON/JSONL)
+            if os.path.isdir(data_path):
+                print(f"Loading MBPP data from local HF dataset dir: {data_path}")
+                ds = load_from_disk(data_path)
+                # 选择split
+                chosen_split = split if split in ds else (
+                    'test' if 'test' in ds else ('validation' if 'validation' in ds else 'train')
+                )
+                data = list(ds[chosen_split])
+            else:
+                print(f"Loading MBPP data from local file: {data_path}")
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    if data_path.endswith('.jsonl'):
+                        data = [json.loads(line) for line in f if line.strip()]
+                    else:
+                        data = json.load(f)
+        else:
+            # 从HuggingFace datasets加载
+            print(f"Loading MBPP data from HuggingFace Hub: '{data_path}' (split: {split})")
+            try:
+                dataset = load_dataset(data_path, 'sanitized', split=split)
+                data = list(dataset)
+            except Exception as e:
+                print(f"Failed to load from HuggingFace Hub. Error: {e}")
+                # Fallback to default mbpp if 'sanitized' fails
+                try:
+                    dataset = load_dataset(data_path, split=split)
+                    data = list(dataset)
+                except Exception as e_fallback:
+                    print(f"Fallback to default MBPP also failed. Error: {e_fallback}")
+                    raise ValueError("Could not load MBPP dataset from Hub or local path.")
+
+        if isinstance(data, dict):
+            data = [data]
+        
+        return data
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        
+        # 构建prompt（指导模型生成代码）
+        prompt = self._build_prompt(item)
+        
+        return {
+            "task_id": item.get("task_id", idx),
+            "prompt": prompt,
+            "text": item.get("text", ""),
+            "test_list": item.get("test_list", []),
+            "test_setup_code": item.get("test_setup_code", ""),
+            "challenge_test_list": item.get("challenge_test_list", []),
+            "reference_code": item.get("code", ""),  # 参考实现
+        }
+    
+    def _build_prompt(self, item: Dict) -> str:
+        """
+        使用官方字段生成提示：严格返回数据集中已有的英文描述，不做包装。
+        优先顺序：prompt > text > description > task_description
+        """
+        for key in ("prompt", "text", "description", "task_description"):
+            val = item.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        return ""
+
+
+def mbpp_collate_fn(batch, tokenizer, max_length=512):
+    """
+    MBPP批处理函数
+    
+    Args:
+        batch: 一批样本
+        tokenizer: HuggingFace tokenizer
+        max_length: 最大序列长度
+    
+    Returns:
+        批处理后的字典，包含：
+        - input_ids: tensor (batch_size, seq_len)
+        - attention_mask: tensor (batch_size, seq_len)
+        - test_list: 测试用例列表
+        - task_ids: 任务ID列表
+    """
+    prompts = [item["prompt"] for item in batch]
+    
+    # Tokenize
+    encoded = tokenizer(
+        prompts,
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+        return_tensors="pt"
+    )
+    
+    return {
+        "input_ids": encoded["input_ids"],
+        "attention_mask": encoded["attention_mask"],
+        "test_list": [item.get("test_list", []) for item in batch],
+        "test_setup_code": [item.get("test_setup_code", "") for item in batch],
+        "test_imports": [item.get("test_imports", "") for item in batch],
+        # Fallback: HF dataset uses 'code' as reference implementation
+        "reference_code": [item.get("reference_code", item.get("code", "")) for item in batch],
+        "task_ids": [item["task_id"] for item in batch],
+        "prompts": prompts,  # 保留原始prompt用于调试
+    }
+
+#!/usr/bin/env python3
+"""
+DoT任务（4x4/5x5乘法、布尔逻辑）的在线数据生成与评测辅助工具。
+提供：
+- 随机生成多位数乘法与布尔逻辑样本（可控数量与随机种子）
+- Prompt构建（要求仅输出最终答案）
+- 预测输出解析（数值/布尔标准化）
+- 简单collate以便tokenizer批处理
+"""
+
+import random
+import re
+from typing import List, Dict, Tuple
+
+
+# ========== 数据生成 ==========
+
+def generate_mult_dataset(num_samples: int, digits: int = 4, seed: int = 42) -> List[Dict]:
+    assert digits in (4, 5), "digits must be 4 or 5"
+    rng = random.Random(seed)
+    low = 10 ** (digits - 1)
+    high = 10 ** digits - 1
+    data: List[Dict] = []
+    for _ in range(num_samples):
+        a = rng.randint(low, high)
+        b = rng.randint(low, high)
+        gold = a * b
+        prompt = (
+            f"Compute the product: {a} × {b}. Only output the final integer, no text."
+        )
+        data.append({"prompt": prompt, "gold": gold})
+    return data
+
+
+def _rand_bool_expr_with_val(
+    rng: random.Random, vars_vals: Dict[str, bool], max_depth: int = 2
+) -> tuple[str, bool]:
+    """
+    递归同时生成布尔表达式字符串与其真值，避免运行时 eval。
+    支持一元 not 与二元 and/or/xor。
+    """
+    # 原子
+    if max_depth <= 0 or rng.random() < 0.4:
+        var = rng.choice(list(vars_vals.keys()))
+        # 可选一元 not
+        if rng.random() < 0.5:
+            return (f"not {var}", (not vars_vals[var]))
+        return (var, vars_vals[var])
+
+    # 二元组合
+    left_expr, left_val = _rand_bool_expr_with_val(rng, vars_vals, max_depth - 1)
+    right_expr, right_val = _rand_bool_expr_with_val(rng, vars_vals, max_depth - 1)
+    op = rng.choice(["and", "or", "xor"])  # 支持xor
+    if op == "and":
+        return (f"({left_expr} and {right_expr})", (left_val and right_val))
+    if op == "or":
+        return (f"({left_expr} or {right_expr})", (left_val or right_val))
+    # xor
+    return (f"({left_expr} xor {right_expr})", (left_val != right_val))
+
+
+def generate_bool_dataset(num_samples: int, seed: int = 42) -> List[Dict]:
+    rng = random.Random(seed)
+    data: List[Dict] = []
+    for _ in range(num_samples):
+        vals = {
+            "A": bool(rng.getrandbits(1)),
+            "B": bool(rng.getrandbits(1)),
+            "C": bool(rng.getrandbits(1)),
+        }
+        expr, gold = _rand_bool_expr_with_val(rng, vals, max_depth=2)
+        prompt = (
+            f"Given A={vals['A']}, B={vals['B']}, C={vals['C']}, evaluate: {expr}. "
+            f"Answer 'True' or 'False' only."
+        )
+        data.append({"prompt": prompt, "gold": gold})
+    return data
+
+
+# ========== 解析与标准化 ==========
+
+def parse_int_from_text(text: str) -> int | None:
+    # 提取首个有符号整数
+    m = re.search(r"[-+]?\d+", text)
+    if not m:
+        return None
+    try:
+        return int(m.group(0))
+    except Exception:
+        return None
+
+
+def parse_bool_from_text(text: str) -> bool | None:
+    t = text.strip().lower()
+    if t in ("true", "1", "yes"):  # 宽松一些
+        return True
+    if t in ("false", "0", "no"):
+        return False
+    # 兜底：提取第一个单词
+    m = re.search(r"\b(true|false|1|0)\b", t)
+    if m:
+        return True if m.group(1) in ("true", "1") else False
+    return None
+
+
+# ========== 批处理辅助 ==========
+
+def dot_collate(prompts: List[str], tokenizer, max_length: int = 256) -> Dict:
+    encoded = tokenizer(
+        prompts,
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+        return_tensors="pt"
+    )
+    return {
+        "input_ids": encoded["input_ids"],
+        "attention_mask": encoded["attention_mask"],
+    }

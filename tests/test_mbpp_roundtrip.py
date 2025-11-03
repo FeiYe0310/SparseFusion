@@ -28,7 +28,7 @@ from helper_fn import (
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
 )
-from mbpp_data_utils import MBPPDataset, mbpp_collate_fn
+from utils.eval_utils import MBPPDataset, mbpp_collate_fn
 
 
 def _clean_code_block(text: str) -> str:

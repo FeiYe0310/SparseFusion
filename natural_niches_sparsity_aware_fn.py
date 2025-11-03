@@ -77,7 +77,8 @@ from helper_fn import (
 )
 from config import GSM8K_DIR, RESULTS_DIR
 from lib.async_shard import AsyncShardCoordinator
-from dot_eval_utils import (
+from utils.eval_utils import (
+    extract_answer,
     generate_mult_dataset,
     generate_bool_dataset,
     parse_int_from_text,
@@ -1273,7 +1274,7 @@ def run_natural_niches_sparsity_aware(
         if is_main_process:
             print(f"\n🎯 Loading BFCL dataset: {bfcl_data_path}")
         try:
-            from bfcl_data_utils import load_bfcl_dataset
+            from utils.eval_utils import load_bfcl_dataset
 
             bfcl_dataset = load_bfcl_dataset(bfcl_data_path, tokenizer)
             if is_main_process:
@@ -1294,7 +1295,7 @@ def run_natural_niches_sparsity_aware(
         if is_main_process:
             print(f"\n🎯 Loading MBPP dataset: {mbpp_data_path}")
         try:
-            from mbpp_data_utils import MBPPDataset
+            from utils.eval_utils import MBPPDataset
             mbpp_dataset = MBPPDataset(mbpp_data_path, tokenizer, split="train")
             mbpp_test_dataset = MBPPDataset(mbpp_data_path, tokenizer, split="test")
             if is_main_process:
@@ -2446,8 +2447,7 @@ def create_bfcl_evaluation_fn(
     Returns:
         evaluation_fn: 返回每个样本的得分 (1.0=正确, 0.0=错误)
     """
-    from bfcl_eval_utils import extract_function_call, evaluate_function_call
-    from bfcl_data_utils import bfcl_collate_fn
+    from utils.eval_utils import extract_function_call, evaluate_function_call, bfcl_collate_fn
     from torch.utils.data import DataLoader, Subset
     import random
 
@@ -2595,7 +2595,7 @@ def create_mbpp_evaluation_fn(
     Returns:
         evaluation_fn: 返回每个样本的得分 (1.0=所有测试通过, 0.0=失败)
     """
-    from mbpp_data_utils import mbpp_collate_fn
+    from utils.eval_utils import mbpp_collate_fn
     from torch.utils.data import DataLoader, Subset
     import random
     import subprocess
