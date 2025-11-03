@@ -2304,6 +2304,35 @@ def run_natural_niches_sparsity_aware(
                 jnp.savez(save_path, params=best_params)
                 print("✅ Model saved successfully.")
 
+        # ---------------- Profiler & DDP cleanup ----------------
+        try:
+            if torch_profiler is not None:
+                torch_profiler.__exit__(None, None, None)
+                if is_main_process:
+                    print("[Profiler] Torch profiler closed.")
+        except Exception:
+            pass
+
+        try:
+            if jax_prof_enable and jax_trace_active:
+                import jax.profiler as jprof
+                jprof.stop_trace()
+                jax_trace_active = False
+                if is_main_process:
+                    print("[Profiler] JAX trace closed.")
+        except Exception:
+            pass
+
+        if dist_enabled:
+            try:
+                dist.barrier()
+            except Exception:
+                pass
+            try:
+                dist.destroy_process_group()
+            except Exception:
+                pass
+
         return results
 
 
