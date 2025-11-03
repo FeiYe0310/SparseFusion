@@ -698,6 +698,13 @@ def create_evaluation_fn_for_llm(
                 answer_texts = batch["answer_text"]
 
                 # 生成答案（最多256个token，保证完整推理过程）
+                try:
+                    import torch as _torch
+                    _rf = _torch.autograd.profiler.record_function("eval.gsm8k.generate")
+                except Exception:
+                    _rf = None
+                if _rf:
+                    _rf.__enter__()
                 generated_ids = restored_model.generate(
                     input_ids,
                     max_new_tokens=256,
@@ -705,6 +712,8 @@ def create_evaluation_fn_for_llm(
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
+                if _rf:
+                    _rf.__exit__(None, None, None)
 
                 # 解码生成的文本（安全解码，避免 None）
                 gen_slice = generated_ids[:, input_ids.shape[1] :]
@@ -722,10 +731,19 @@ def create_evaluation_fn_for_llm(
                         torch.full_like(gen_slice, fallback_id)
                     )
                 try:
+                    try:
+                        import torch as _torch
+                        _rf2 = _torch.autograd.profiler.record_function("eval.gsm8k.decode")
+                    except Exception:
+                        _rf2 = None
+                    if _rf2:
+                        _rf2.__enter__()
                     generated_texts = tokenizer.batch_decode(
                         gen_slice,
                         skip_special_tokens=True,
                     )
+                    if _rf2:
+                        _rf2.__exit__(None, None, None)
                 except Exception:
                     generated_texts = []
                     for row in gen_slice:
@@ -1096,6 +1114,41 @@ def run_natural_niches_sparsity_aware(
     dist_enabled = distributed and world_size > 1
     # 可选耗时打印开关：设置环境变量 TIME_PROFILE=1 开启
     time_profile_enabled = os.environ.get("TIME_PROFILE", "0") == "1"
+
+    # ---------------- Profiler switches (env) ----------------
+    torch_prof_enable = (os.environ.get("TORCH_PROFILER", "0") == "1") and is_main_process
+    torch_prof_dir = os.environ.get("TORCH_PROF_DIR", os.path.join("results", "profiler", "torch"))
+    prof_iter_start = int(os.environ.get("PROF_ITER_START", "1"))
+    prof_iter_end = int(os.environ.get("PROF_ITER_END", str(prof_iter_start)))
+    if prof_iter_end < prof_iter_start:
+        prof_iter_end = prof_iter_start
+    torch_profiler = None
+    if torch_prof_enable:
+        try:
+            import torch.profiler as torch_prof
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out_dir = os.path.join(torch_prof_dir, ts)
+            os.makedirs(out_dir, exist_ok=True)
+            activities = [torch_prof.ProfilerActivity.CPU]
+            if torch.cuda.is_available():
+                activities.append(torch_prof.ProfilerActivity.CUDA)
+            torch_profiler = torch_prof.profile(
+                activities=activities,
+                on_trace_ready=torch_prof.tensorboard_trace_handler(out_dir),
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+            )
+            torch_profiler.__enter__()
+            if is_main_process:
+                print(f"[Profiler] Torch profiler enabled. Trace dir: {out_dir} | iters {prof_iter_start}-{prof_iter_end}")
+        except Exception as _e:
+            print(f"[Profiler] Torch profiler init failed: {_e}")
+            torch_profiler = None
+
+    jax_prof_enable = (os.environ.get("JAX_PROFILER", "0") == "1") and is_main_process
+    jax_trace_dir = os.path.join("results", "profiler", "jax")
+    jax_trace_active = False
 
     # --- LLM & Data Loading (IDENTICAL TO ORIGINAL) ---
     if is_main_process:
@@ -1575,6 +1628,26 @@ def run_natural_niches_sparsity_aware(
                 if async_coordinator is not None:
                     shard_owner = i % async_coordinator.num_nodes
 
+                # Enable/disable JAX tracing on the selected iteration window (main process only)
+                try:
+                    if jax_prof_enable and is_main_process:
+                        iter_idx = i + 1
+                        if (not jax_trace_active) and (iter_idx == prof_iter_start):
+                            import jax.profiler as jprof
+                            ts = time.strftime("%Y%m%d_%H%M%S")
+                            jt_dir = os.path.join(jax_trace_dir, ts)
+                            os.makedirs(jt_dir, exist_ok=True)
+                            jprof.start_trace(jt_dir)
+                            jax_trace_active = True
+                            print(f"[Profiler] JAX trace started at iter {iter_idx}. Trace dir: {jt_dir}")
+                        if jax_trace_active and (iter_idx == prof_iter_end):
+                            import jax.profiler as jprof
+                            jprof.stop_trace()
+                            jax_trace_active = False
+                            print(f"[Profiler] JAX trace stopped at iter {iter_idx}.")
+                except Exception:
+                    pass
+
                 # --- Child Generation (Main Process Only) ---
                 if is_main_process:
                     # 1) 父母选择（含JAX计算）
@@ -1735,7 +1808,21 @@ def run_natural_niches_sparsity_aware(
 
                 # --- Evaluation (All Processes) ---
                 eval_t0 = time.time() if (is_main_process and time_profile_enabled) else None
-                score = train_eval_fn(child_bf16)
+                # Torch profiler step control: only profile selected iterations
+                if torch_profiler is not None and is_main_process:
+                    iter_idx = i + 1
+                    if prof_iter_start <= iter_idx <= prof_iter_end:
+                        import torch
+                        with torch.autograd.profiler.record_function("eval"):
+                            score = train_eval_fn(child_bf16)
+                        try:
+                            torch_profiler.step()
+                        except Exception:
+                            pass
+                    else:
+                        score = train_eval_fn(child_bf16)
+                else:
+                    score = train_eval_fn(child_bf16)
                 if is_main_process and time_profile_enabled and eval_t0 is not None:
                     t_eval = time.time() - eval_t0
 
@@ -2621,6 +2708,13 @@ def create_mbpp_evaluation_fn(
                     attention_mask = batch['attention_mask'].to(device)
                 
                 # Generate代码
+                try:
+                    import torch as _torch
+                    _rf = _torch.autograd.profiler.record_function("eval.mbpp.generate")
+                except Exception:
+                    _rf = None
+                if _rf:
+                    _rf.__enter__()
                 generated_ids = restored_model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -2629,6 +2723,8 @@ def create_mbpp_evaluation_fn(
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
+                if _rf:
+                    _rf.__exit__(None, None, None)
                 
                 # Decode生成的代码（安全解码，避免越界ID导致None）
                 gen_slice = generated_ids[:, input_ids.shape[1]:]
@@ -2646,10 +2742,19 @@ def create_mbpp_evaluation_fn(
                         torch.full_like(gen_slice, fallback_id)
                     )
                 try:
+                    try:
+                        import torch as _torch
+                        _rf2 = _torch.autograd.profiler.record_function("eval.mbpp.decode")
+                    except Exception:
+                        _rf2 = None
+                    if _rf2:
+                        _rf2.__enter__()
                     generated_codes = tokenizer.batch_decode(
                         gen_slice,
                         skip_special_tokens=True
                     )
+                    if _rf2:
+                        _rf2.__exit__(None, None, None)
                 except Exception:
                     # 退化路径：逐条解码并再次兜底
                     generated_codes = []
