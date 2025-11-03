@@ -1812,8 +1812,8 @@ def run_natural_niches_sparsity_aware(
                 if torch_profiler is not None and is_main_process:
                     iter_idx = i + 1
                     if prof_iter_start <= iter_idx <= prof_iter_end:
-                        import torch
-                        with torch.autograd.profiler.record_function("eval"):
+                        import torch as _torch
+                        with _torch.autograd.profiler.record_function("eval"):
                             score = train_eval_fn(child_bf16)
                         try:
                             torch_profiler.step()
