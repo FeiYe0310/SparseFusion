@@ -591,6 +591,8 @@ def create_evaluation_fn_for_llm(
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
         # Get device from model
         device = next(base_model.parameters()).device
+        # 细粒度计时开关
+        time_profile_enabled_local = os.environ.get("TIME_PROFILE", "0") == "1"
 
         # Restore parameters into the raw model (not the DDP wrapper)
         restored_model = jax_flattened_to_pytorch_model(
@@ -703,6 +705,12 @@ def create_evaluation_fn_for_llm(
                     _rf = _torch.autograd.profiler.record_function("eval.gsm8k.generate")
                 except Exception:
                     _rf = None
+                # 计时：generate
+                if time_profile_enabled_local and rank == 0:
+                    import time as _time
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    _t0_gen = _time.time()
                 if _rf:
                     _rf.__enter__()
                 generated_ids = restored_model.generate(
@@ -714,6 +722,11 @@ def create_evaluation_fn_for_llm(
                 )
                 if _rf:
                     _rf.__exit__(None, None, None)
+                if time_profile_enabled_local and rank == 0:
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    _dt_gen = _time.time() - _t0_gen
+                    print(f"[EvalProfile][gsm8k] generate={_dt_gen:.3f}s batch={len(answer_texts)}")
 
                 # 解码生成的文本（安全解码，避免 None）
                 gen_slice = generated_ids[:, input_ids.shape[1] :]
@@ -736,6 +749,11 @@ def create_evaluation_fn_for_llm(
                         _rf2 = _torch.autograd.profiler.record_function("eval.gsm8k.decode")
                     except Exception:
                         _rf2 = None
+                    # 计时：decode
+                    if time_profile_enabled_local and rank == 0:
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        _t0_dec = _time.time()
                     if _rf2:
                         _rf2.__enter__()
                     generated_texts = tokenizer.batch_decode(
@@ -744,6 +762,11 @@ def create_evaluation_fn_for_llm(
                     )
                     if _rf2:
                         _rf2.__exit__(None, None, None)
+                    if time_profile_enabled_local and rank == 0:
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        _dt_dec = _time.time() - _t0_dec
+                        print(f"[EvalProfile][gsm8k] decode={_dt_dec:.3f}s batch={len(answer_texts)}")
                 except Exception:
                     generated_texts = []
                     for row in gen_slice:
@@ -2742,6 +2765,12 @@ def create_mbpp_evaluation_fn(
                     _rf = _torch.autograd.profiler.record_function("eval.mbpp.generate")
                 except Exception:
                     _rf = None
+                # 计时：generate
+                if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                    import time as _time
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    _t0_gen = _time.time()
                 if _rf:
                     _rf.__enter__()
                 generated_ids = restored_model.generate(
@@ -2754,6 +2783,11 @@ def create_mbpp_evaluation_fn(
                 )
                 if _rf:
                     _rf.__exit__(None, None, None)
+                if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    _dt_gen = _time.time() - _t0_gen
+                    print(f"[EvalProfile][mbpp] generate={_dt_gen:.3f}s batch={len(test_lists)}")
                 
                 # Decode生成的代码（安全解码，避免越界ID导致None）
                 gen_slice = generated_ids[:, input_ids.shape[1]:]
@@ -2776,6 +2810,11 @@ def create_mbpp_evaluation_fn(
                         _rf2 = _torch.autograd.profiler.record_function("eval.mbpp.decode")
                     except Exception:
                         _rf2 = None
+                    # 计时：decode
+                    if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        _t0_dec = _time.time()
                     if _rf2:
                         _rf2.__enter__()
                     generated_codes = tokenizer.batch_decode(
@@ -2784,6 +2823,11 @@ def create_mbpp_evaluation_fn(
                     )
                     if _rf2:
                         _rf2.__exit__(None, None, None)
+                    if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        _dt_dec = _time.time() - _t0_dec
+                        print(f"[EvalProfile][mbpp] decode={_dt_dec:.3f}s batch={len(test_lists)}")
                 except Exception:
                     # 退化路径：逐条解码并再次兜底
                     generated_codes = []
@@ -2805,6 +2849,8 @@ def create_mbpp_evaluation_fn(
                             generated_codes.append("")
                 
                 # 执行测试评估每个样本
+                # 计时：执行测试
+                _exec_total = 0.0
                 for sample_idx, (gen_code, tests, setup, timport, ref) in enumerate(zip(generated_codes, test_lists, setup_codes, test_imports, ref_codes)):
                     try:
                         # 清理生成的代码（移除markdown代码块标记等）
@@ -2820,7 +2866,15 @@ def create_mbpp_evaluation_fn(
                         
                         # 执行测试
                         merged_setup = ((timport or "").strip() + "\n" + (setup or "").strip()).strip()
+                        if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                            if torch.cuda.is_available():
+                                torch.cuda.synchronize()
+                            _t0_exec = _time.time()
                         is_correct = safe_execute_code(clean_code, tests, merged_setup)
+                        if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                            if torch.cuda.is_available():
+                                torch.cuda.synchronize()
+                            _exec_total += (_time.time() - _t0_exec)
                         all_scores.append(1.0 if is_correct else 0.0)
                         
                         # 调试打印（受 VERBOSE_EVAL 控制）
@@ -3179,7 +3233,9 @@ def create_dot_eval_fn(
                 pred = parse_fn(txt)
                 is_correct = (pred is not None and pred == gold)
                 all_scores.append(1.0 if is_correct else 0.0)
-                
+                # 批次执行时间打印
+                if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
+                    print(f"[EvalProfile][mbpp] execute_tests={_exec_total:.3f}s batch={len(test_lists)}")
                 # 调试：打印前3个样本的输出
                 if rank == 0 and start == 0 and i < 3:
                     print(f"  [{task.upper()}] Sample {i+1}:")
