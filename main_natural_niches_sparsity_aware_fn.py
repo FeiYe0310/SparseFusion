@@ -1820,7 +1820,7 @@ def run_natural_niches_sparsity_aware(
                     if prof_iter_start <= iter_idx <= prof_iter_end:
                         import torch as _torch
                         with _torch.autograd.profiler.record_function("eval"):
-                score = train_eval_fn(child_bf16)
+                            score = train_eval_fn(child_bf16)
                         try:
                             torch_profiler.step()
                         except Exception:
