@@ -510,25 +510,6 @@ def prune_with_wanda(
 # ==============================================================================
 
 
-def extract_answer(text: str) -> str:
-    """
-    从GSM8K生成的文本中提取数字答案
-    GSM8K的标准格式：答案在####后面
-    """
-    import re
-
-    # 尝试找到####后的答案
-    if "####" in text:
-        answer = text.split("####")[-1].strip()
-    else:
-        # 如果没有####，尝试提取最后一个数字
-        answer = text.strip()
-
-    # 提取数字（可能带逗号、小数点）
-    numbers = re.findall(r"-?\d+(?:,\d{3})*(?:\.\d+)?", answer.replace(",", ""))
-    if numbers:
-        return numbers[-1]  # 返回最后一个数字
-    return ""
 
 
 def create_evaluation_fn_for_llm(
@@ -2605,80 +2586,8 @@ def create_mbpp_evaluation_fn(
     device = next(model_skeleton.parameters()).device
     iteration_counter = {'count': 0}
     
-    def safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
-        """
-        安全执行代码并运行测试
-        
-        Args:
-            code: 生成的代码
-            tests: 测试用例列表（assert语句）
-            setup_code: 测试前置代码
-            timeout: 超时时间（秒）
-        
-        Returns:
-            是否所有测试通过
-        """
-        # 构建完整的测试程序
-        program_parts = []
-        
-        # 添加setup代码
-        if setup_code:
-            program_parts.append(setup_code)
-        
-        # 添加生成的代码
-        program_parts.append(code)
-        
-        # 添加测试用例
-        program_parts.extend(tests)
-        
-        # 添加成功标记
-        program_parts.append("print('__MBPP_ALL_TESTS_PASSED__')")
-        
-        program = "\n".join(program_parts)
-        
-        # 使用临时文件执行
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                filepath = os.path.join(tmpdir, f"{uuid.uuid4().hex}.py")
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(program)
-                
-                # 执行代码
-                result = subprocess.run(
-                    ["python3", filepath],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    env={"PYTHONDONTWRITEBYTECODE": "1"}  # 不生成.pyc文件
-                )
-                
-                # 检查是否成功
-                success = (
-                    "__MBPP_ALL_TESTS_PASSED__" in (result.stdout or "") 
-                    and result.returncode == 0
-                )
-                
-                return success
-                
-        except subprocess.TimeoutExpired:
-            return False  # 超时视为失败
-        except Exception:
-            return False  # 任何异常都视为失败
-    
-    import re
-
-    def _parse_first_def_name(text: str) -> str:
-        m = re.search(r"^\s*def\s+([a-zA-Z_][\w]*)\s*\(", text, flags=re.M)
-        return m.group(1) if m else ""
-
-    def _clean_code_block(generated: str) -> str:
-        s = generated.strip()
-        fence = re.search(r"```(?:python)?\n([\s\S]*?)```", s, flags=re.I)
-        if fence:
-            return fence.group(1).strip()
-        # fallback: from first def to end
-        m = re.search(r"^\s*def\s+", s, flags=re.M)
-        return s[m.start():].strip() if m else s
+    # Import MBPP helper functions from utils
+    from utils.eval_utils import safe_execute_code, clean_code_block, parse_first_def_name
 
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
         """评估MBPP任务"""
@@ -2699,7 +2608,7 @@ def create_mbpp_evaluation_fn(
             batch_size=batch_size,
             shuffle=False,
             num_workers=0,
-            collate_fn=lambda batch: mbpp_collate_fn(batch, tokenizer),
+            collate_fn=mbpp_collate_fn,
         )
         
         # 重建模型参数（使用和GSM8K/BFCL相同的方式）
@@ -2734,7 +2643,7 @@ def create_mbpp_evaluation_fn(
 
                     texts = []
                     for q, ref in zip(prompts, ref_codes):
-                        expected = _parse_first_def_name(ref or "")
+                        expected = parse_first_def_name(ref or "")
                         msgs = [{"role": "system", "content": "You are a helpful Python coder. Output only a valid Python function that solves the task."}]
                         # attach few-shot
                         for ex_i in exemplars:
@@ -2854,15 +2763,15 @@ def create_mbpp_evaluation_fn(
                 for sample_idx, (gen_code, tests, setup, timport, ref) in enumerate(zip(generated_codes, test_lists, setup_codes, test_imports, ref_codes)):
                     try:
                         # 清理生成的代码（移除markdown代码块标记等）
-                        clean_code = _clean_code_block(gen_code)
+                        cleaned = clean_code_block(gen_code)
 
                         # 函数名 alias：期望名 ← 生成名
-                        expected = _parse_first_def_name(ref or "")
-                        generated = _parse_first_def_name(clean_code)
+                        expected = parse_first_def_name(ref or "")
+                        generated = parse_first_def_name(cleaned)
                         alias_line = ""
                         if expected and generated and expected != generated:
                             alias_line = f"\n{expected} = {generated}"
-                            clean_code = clean_code + alias_line
+                            cleaned = cleaned + alias_line
                         
                         # 执行测试
                         merged_setup = ((timport or "").strip() + "\n" + (setup or "").strip()).strip()
@@ -2870,7 +2779,7 @@ def create_mbpp_evaluation_fn(
                             if torch.cuda.is_available():
                                 torch.cuda.synchronize()
                             _t0_exec = _time.time()
-                        is_correct = safe_execute_code(clean_code, tests, merged_setup)
+                        is_correct = safe_execute_code(cleaned, tests, merged_setup)
                         if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
                             if torch.cuda.is_available():
                                 torch.cuda.synchronize()

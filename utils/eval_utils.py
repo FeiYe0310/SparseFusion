@@ -232,6 +232,93 @@ def mbpp_collate_fn(batch):
         "reference_codes": [item["reference_code"] for item in batch],
     }
 
+
+def safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
+    """
+    安全执行代码并运行测试
+    
+    Args:
+        code: 生成的代码
+        tests: 测试用例列表（assert语句）
+        setup_code: 测试前置代码
+        timeout: 超时时间（秒）
+    
+    Returns:
+        是否所有测试通过
+    """
+    import subprocess
+    import tempfile
+    import uuid
+    
+    # 构建完整的测试程序
+    program_parts = []
+    
+    # 添加setup代码
+    if setup_code:
+        program_parts.append(setup_code)
+    
+    # 添加生成的代码
+    program_parts.append(code)
+    
+    # 添加测试用例
+    program_parts.extend(tests)
+    
+    # 添加成功标记
+    program_parts.append("print('__MBPP_ALL_TESTS_PASSED__')")
+    
+    program = "\n".join(program_parts)
+    
+    # 使用临时文件执行
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, f"{uuid.uuid4().hex}.py")
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(program)
+            
+            # 执行代码
+            result = subprocess.run(
+                ["python3", filepath],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env={"PYTHONDONTWRITEBYTECODE": "1"}  # 不生成.pyc文件
+            )
+            
+            # 检查是否成功
+            success = (
+                "__MBPP_ALL_TESTS_PASSED__" in (result.stdout or "") 
+                and result.returncode == 0
+            )
+            
+            return success
+            
+    except subprocess.TimeoutExpired:
+        return False  # 超时视为失败
+    except Exception:
+        return False  # 任何异常都视为失败
+
+
+def clean_code_block(text: str) -> str:
+    """从生成文本中提取代码块"""
+    s = text.strip()
+    # 方法1: 尝试提取第一个fence代码块
+    m = re.search(r"```python\n([\s\S]*?)\n```", s, re.IGNORECASE)
+    if not m:
+        m = re.search(r"```\n([\s\S]*?)\n```", s)
+    if m:
+        return m.group(1).strip()
+    # 方法2: fallback，从第一个'def '到结尾
+    m = re.search(r"def\s+\w+\s*\(.*", s)
+    if m:
+        return s[m.start():].strip()
+    return s
+
+
+def parse_first_def_name(text: str) -> Optional[str]:
+    """解析代码中第一个函数定义的名字"""
+    m = re.search(r"^\s*def\s+([a-zA-Z_][\w]*)\s*\(", text, re.MULTILINE)
+    return m.group(1) if m else None
+
 # ==============================================================================
 # DoT (Depth-of-Thought) Tasks Utilities
 # ==============================================================================
@@ -319,6 +406,9 @@ __all__ = [
     # MBPP
     "MBPPDataset",
     "mbpp_collate_fn",
+    "safe_execute_code",
+    "clean_code_block",
+    "parse_first_def_name",
     # DoT
     "generate_mult_dataset",
     "generate_bool_dataset",

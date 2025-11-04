@@ -25,64 +25,13 @@ from helper_fn import (
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
 )
-from utils.eval_utils import MBPPDataset, mbpp_collate_fn
-
-
-def safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
-    import subprocess
-    import tempfile
-    import uuid
-
-    program_parts = []
-    if setup_code:
-        program_parts.append(setup_code)
-    program_parts.append(code)
-    program_parts.extend(tests)
-    program_parts.append("print('__MBPP_ALL_TESTS_PASSED__')")
-    program = "\n".join(program_parts)
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filepath = os.path.join(tmpdir, f"{uuid.uuid4().hex}.py")
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(program)
-
-            result = subprocess.run(
-                ["python3", filepath],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env={"PYTHONDONTWRITEBYTECODE": "1"},
-            )
-
-            success = (
-                "__MBPP_ALL_TESTS_PASSED__" in (result.stdout or "") and result.returncode == 0
-            )
-            return success
-    except subprocess.TimeoutExpired:
-        return False
-    except Exception:
-        return False
-
-
-def clean_code_block(text: str) -> str:
-    s = text.strip()
-    # 1) Try to extract the first fenced code block
-    m = re.search(r"```python\n([\s\S]*?)\n```", s, re.IGNORECASE)
-    if not m:
-        m = re.search(r"```\n([\s\S]*?)\n```", s)
-    if m:
-        return m.group(1).strip()
-    # 2) Fallback: take from the first 'def ' to the end
-    m = re.search(r"def\s+\w+\s*\(.*", s)
-    if m:
-        return s[m.start():].strip()
-    return s
-
-
-def parse_first_def_name(text: str) -> str | None:
-    m = re.search(r"^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", text, re.MULTILINE)
-    return m.group(1) if m else None
+from utils.eval_utils import (
+    MBPPDataset,
+    mbpp_collate_fn,
+    safe_execute_code,
+    clean_code_block,
+    parse_first_def_name,
+)
 
 
 def load_model_and_tokenizer(model_path: str, device: torch.device):
@@ -132,7 +81,7 @@ def evaluate_mbpp_with_model(
 
     loader = DataLoader(
         eval_ds, batch_size=batch_size, shuffle=False, num_workers=0,
-        collate_fn=lambda b: mbpp_collate_fn(b, tokenizer),
+        collate_fn=mbpp_collate_fn,
     )
     # Prepare exemplar pool for few-shot, if enabled
     exemplar_pool: list[dict] | None = None

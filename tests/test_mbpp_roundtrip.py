@@ -28,57 +28,13 @@ from helper_fn import (
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
 )
-from utils.eval_utils import MBPPDataset, mbpp_collate_fn
-
-
-def _clean_code_block(text: str) -> str:
-    import re
-    s = text.strip()
-    m = re.search(r"```python\n([\s\S]*?)\n```", s, re.IGNORECASE)
-    if not m:
-        m = re.search(r"```\n([\s\S]*?)\n```", s)
-    if m:
-        return m.group(1).strip()
-    m = re.search(r"def\s+\w+\s*\(.*", s)
-    if m:
-        return s[m.start():].strip()
-    return s
-
-def _parse_first_def_name(text: str) -> str | None:
-    m = re.search(r"^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", text, re.MULTILINE)
-    return m.group(1) if m else None
-
-
-def _safe_execute_code(code: str, tests: list, setup_code: str = "", timeout: int = 10) -> bool:
-    import subprocess
-    import tempfile
-    import uuid
-
-    program_parts = []
-    if setup_code:
-        program_parts.append(setup_code)
-    program_parts.append(code)
-    program_parts.extend(tests)
-    program_parts.append("print('__MBPP_ALL_TESTS_PASSED__')")
-    program = "\n".join(program_parts)
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filepath = os.path.join(tmpdir, f"{uuid.uuid4().hex}.py")
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(program)
-            result = subprocess.run(
-                ["python3", filepath],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env={"PYTHONDONTWRITEBYTECODE": "1"},
-            )
-            return ("__MBPP_ALL_TESTS_PASSED__" in (result.stdout or "")) and (result.returncode == 0)
-    except subprocess.TimeoutExpired:
-        return False
-    except Exception:
-        return False
+from utils.eval_utils import (
+    MBPPDataset,
+    mbpp_collate_fn,
+    safe_execute_code,
+    clean_code_block,
+    parse_first_def_name,
+)
 
 
 def _load_model_and_tokenizer(model_path: str, device: torch.device):
@@ -100,7 +56,7 @@ def _evaluate_mbpp(model, tokenizer, mbpp_path: str, batch_size: int, subset: in
     eval_ds = Subset(ds, list(range(min(subset, len(ds))))) if subset is not None else ds
     loader = DataLoader(
         eval_ds, batch_size=batch_size, shuffle=False, num_workers=0,
-        collate_fn=lambda b: mbpp_collate_fn(b, tokenizer),
+        collate_fn=mbpp_collate_fn,
     )
 
     passed = 0
@@ -127,12 +83,12 @@ def _evaluate_mbpp(model, tokenizer, mbpp_path: str, batch_size: int, subset: in
             )
 
             for gen, tests, setup, imports_code, ref_code in zip(gen_texts, tests_list, setup_codes, imports_codes, ref_codes):
-                code = _clean_code_block(gen)
-                expected = _parse_first_def_name(ref_code or "")
-                got = _parse_first_def_name(code)
+                code = clean_code_block(gen)
+                expected = parse_first_def_name(ref_code or "")
+                got = parse_first_def_name(code)
                 alias_line = f"{expected} = {got}" if expected and got and expected != got else ""
                 combined_setup = "\n".join([x for x in [imports_code or "", setup or "", alias_line] if x])
-                ok = _safe_execute_code(code, tests, combined_setup)
+                ok = safe_execute_code(code, tests, combined_setup)
                 passed += 1 if ok else 0
                 total += 1
     return passed, total
