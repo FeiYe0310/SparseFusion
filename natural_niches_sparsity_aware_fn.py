@@ -677,7 +677,7 @@ def create_evaluation_fn_for_llm(
                     input_ids = enc["input_ids"].to(device)
                     attention_mask = enc["attention_mask"].to(device)
                 else:
-                    input_ids = batch["input_ids"].to(device)
+                input_ids = batch["input_ids"].to(device)
                 # 原始答案文本（用于提取ground truth）
                 answer_texts = batch["answer_text"]
 
@@ -738,10 +738,10 @@ def create_evaluation_fn_for_llm(
                         _t0_dec = _time.time()
                     if _rf2:
                         _rf2.__enter__()
-                    generated_texts = tokenizer.batch_decode(
+                generated_texts = tokenizer.batch_decode(
                         gen_slice,
-                        skip_special_tokens=True,
-                    )
+                    skip_special_tokens=True,
+                )
                     if _rf2:
                         _rf2.__exit__(None, None, None)
                     if time_profile_enabled_local and rank == 0:
@@ -1238,7 +1238,7 @@ def run_natural_niches_sparsity_aware(
     tokenized_test_dataset = (
         dataset["test"].map(
             preprocess_function, batched=True, remove_columns=["question", "answer"]
-        )
+    )
     )
 
     # Few-shot池：用于GSM8K Qwen聊天模板的示例采样
@@ -1298,7 +1298,7 @@ def run_natural_niches_sparsity_aware(
 
     # --- Evaluation Setup (IDENTICAL TO ORIGINAL) ---
         if is_main_process and os.environ.get("VERBOSE_EVAL", "0") == "1":
-            print("Setting up evaluation environment...")
+        print("Setting up evaluation environment...")
     model_skeleton.to(device)
 
     if dist_enabled:
@@ -1819,7 +1819,7 @@ def run_natural_niches_sparsity_aware(
                     if prof_iter_start <= iter_idx <= prof_iter_end:
                         import torch as _torch
                         with _torch.autograd.profiler.record_function("eval"):
-                            score = train_eval_fn(child_bf16)
+                score = train_eval_fn(child_bf16)
                         try:
                             torch_profiler.step()
                         except Exception:
@@ -2210,7 +2210,7 @@ def run_natural_niches_sparsity_aware(
                         pickle.dump(checkpoint_data, f)
 
                     if os.environ.get("VERBOSE_EVAL", "0") == "1":
-                        print(f"💾 Checkpoint saved: {checkpoint_path}")
+                    print(f"💾 Checkpoint saved: {checkpoint_path}")
 
                     # Keep only the latest checkpoint for this run to save space
                     try:
@@ -2502,7 +2502,7 @@ def create_bfcl_evaluation_fn(
                         torch.full_like(gen_slice, fallback_id)
                     )
                 try:
-                    generated_texts = tokenizer.batch_decode(
+                generated_texts = tokenizer.batch_decode(
                         gen_slice,
                         skip_special_tokens=True
                     )
@@ -2588,7 +2588,7 @@ def create_mbpp_evaluation_fn(
     
     # Import MBPP helper functions from utils
     from utils.eval_utils import safe_execute_code, clean_code_block, parse_first_def_name
-
+    
     def evaluation_fn(flat_params: jnp.ndarray) -> jnp.ndarray:
         """评估MBPP任务"""
         iteration_counter['count'] += 1
@@ -2726,10 +2726,10 @@ def create_mbpp_evaluation_fn(
                         _t0_dec = _time.time()
                     if _rf2:
                         _rf2.__enter__()
-                    generated_codes = tokenizer.batch_decode(
+                generated_codes = tokenizer.batch_decode(
                         gen_slice,
-                        skip_special_tokens=True
-                    )
+                    skip_special_tokens=True
+                )
                     if _rf2:
                         _rf2.__exit__(None, None, None)
                     if os.environ.get("TIME_PROFILE", "0") == "1" and rank == 0:
@@ -3086,9 +3086,9 @@ def create_dot_eval_fn(
                 input_ids = enc["input_ids"].to(device)
                 attention_mask = enc["attention_mask"].to(device)
             else:
-                enc = dot_collate(batch_prompts, tokenizer, max_length=256)
-                input_ids = enc['input_ids'].to(device)
-                attention_mask = enc['attention_mask'].to(device)
+            enc = dot_collate(batch_prompts, tokenizer, max_length=256)
+            input_ids = enc['input_ids'].to(device)
+            attention_mask = enc['attention_mask'].to(device)
 
             with torch.no_grad():
                 gen_ids = restored_model.generate(
@@ -3115,10 +3115,10 @@ def create_dot_eval_fn(
                         torch.full_like(gen_slice, fallback_id)
                     )
                 try:
-                    gen_txts = tokenizer.batch_decode(
+                gen_txts = tokenizer.batch_decode(
                         gen_slice,
-                        skip_special_tokens=True
-                    )
+                    skip_special_tokens=True
+                )
                 except Exception:
                     gen_txts = []
                     for row in gen_slice:
