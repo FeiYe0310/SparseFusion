@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover
 
 from torch.utils.data import DataLoader, Subset
 
-from helper_fn import (
+from utils.model_utils import (
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
 )

@@ -68,12 +68,13 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
-from helper_fn import (
+from utils.model_utils import (
     crossover,
     crossover_without_splitpoint,
     mutate,
     get_pre_trained_models_and_skeleton,
     jax_flattened_to_pytorch_model,
+    pytorch_to_jax_flattened,
 )
 from config import GSM8K_DIR, RESULTS_DIR
 from lib.async_shard import AsyncShardCoordinator

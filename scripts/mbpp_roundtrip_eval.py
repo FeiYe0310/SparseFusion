@@ -21,7 +21,7 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from helper_fn import (
+from utils.model_utils import (
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
 )

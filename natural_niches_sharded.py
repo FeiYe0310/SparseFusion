@@ -19,7 +19,7 @@ from jax import dlpack as jax_dlpack
 from jax.experimental.pjit import pjit
 from jax.sharding import NamedSharding, PartitionSpec
 
-from helper_fn import (
+from utils.model_utils import (
     crossover,
     crossover_without_splitpoint,
     mutate,

@@ -5,7 +5,7 @@ import torch
 import pytest
 import jax
 
-from helper_fn import (
+from utils.model_utils import (
     merge_tokenizers_and_align_models,
     pytorch_to_jax_flattened,
     jax_flattened_to_pytorch_model,
