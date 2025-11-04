@@ -68,7 +68,7 @@ echo "🚀 开始MBPP三任务快速测试..."
 echo ""
 
 # 运行实验
-python3 main_sparsity_aware.py \
+python3 natural_niches_sparsity_aware_fn.py \
   --runs $RUNS \
   --model1_path "$MODEL1_PATH" \
   --model2_path "$MODEL2_PATH" \

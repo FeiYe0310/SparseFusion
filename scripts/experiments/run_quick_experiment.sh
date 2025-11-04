@@ -4,7 +4,7 @@
 export CUDA_VISIBLE_DEVICES=0
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
   --model1_path models/Qwen2.5-0.5B-Instruct \
   --model2_path models/Qwen2.5-Coder-0.5B-Instruct \
   --pop_size 5 \

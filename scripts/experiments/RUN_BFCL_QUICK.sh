@@ -71,7 +71,7 @@ echo ""
 # ============================================================================
 START_TIME=$(date +%s)
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
   --archive_backend "${ARCHIVE_BACKEND}" \
   --model1_path "$MODEL1_PATH" \
   --model2_path "$MODEL2_PATH" \

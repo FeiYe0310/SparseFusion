@@ -72,7 +72,7 @@ sleep 2
 
 # Experiment 2: Balanced (ω=0.5, β=0.5)
 echo "🚀 [2/5] Starting Balanced (ω=0.5, β=0.5)..."
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --pop_size ${POP_SIZE} \
     --total_forward_passes ${TOTAL_FP} \
     --runs ${RUNS} \
@@ -91,7 +91,7 @@ sleep 2
 
 # Experiment 3: Performance-Focused (ω=0.8, β=0.2)
 echo "🚀 [3/5] Starting Performance-Focused (ω=0.8, β=0.2)..."
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --pop_size ${POP_SIZE} \
     --total_forward_passes ${TOTAL_FP} \
     --runs ${RUNS} \
@@ -110,7 +110,7 @@ sleep 2
 
 # Experiment 4: Sparsity-Focused (ω=0.2, β=0.8)
 echo "🚀 [4/5] Starting Sparsity-Focused (ω=0.2, β=0.8)..."
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --pop_size ${POP_SIZE} \
     --total_forward_passes ${TOTAL_FP} \
     --runs ${RUNS} \
@@ -129,7 +129,7 @@ sleep 2
 
 # Experiment 5: Extreme Sparsity (ω=0.1, β=0.9)
 echo "🚀 [5/5] Starting Extreme Sparsity (ω=0.1, β=0.9)..."
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --pop_size ${POP_SIZE} \
     --total_forward_passes ${TOTAL_FP} \
     --runs ${RUNS} \

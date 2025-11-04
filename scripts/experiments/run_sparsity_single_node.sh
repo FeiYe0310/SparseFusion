@@ -47,7 +47,7 @@ GPUS_PER_NODE="${GPUS_PER_NODE:-1}"
 USE_SINGLE_PROCESS_SHARDING="${USE_SINGLE_PROCESS_SHARDING:-0}"
 ARCHIVE_BACKEND="${ARCHIVE_BACKEND:-gpu}"
 
-# Allow callers to append extra CLI args for main_sparsity_aware.py
+# Allow callers to append extra CLI args for natural_niches_sparsity_aware_fn.py
 MAIN_ARGS=("$@")
 
 # Main execution logic
@@ -65,7 +65,7 @@ if (( GPUS_PER_NODE > 1 )); then
     fi
     
     # JAX sharding mode: evaluation on GPU, archive sharded across GPUs
-    exec python main_sparsity_aware.py \
+    exec python natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -85,7 +85,7 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      main_sparsity_aware.py \
+      natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
@@ -95,7 +95,7 @@ else
   # Mode 3: Single-process, single-GPU
   # ===========================================================================
   echo "[SparseFusion] Launching single-process python run on 1 GPU" >&2
-  exec python main_sparsity_aware.py \
+  exec python natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

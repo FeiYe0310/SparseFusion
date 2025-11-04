@@ -34,7 +34,7 @@ echo ""
 
 OUTPUT_DIR_MULTI="results_bfcl_multitask_pop${POP_SIZE}_prune${PRUNING_SPARSITY}"
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --model1_path models/Qwen2.5-0.5B-Instruct \
     --model2_path models/Qwen2.5-0.5B-Instruct \
     --pop_size $POP_SIZE \
@@ -59,7 +59,7 @@ echo ""
 
 OUTPUT_DIR_SINGLE="results_gsm8k_baseline_pop${POP_SIZE}_prune${PRUNING_SPARSITY}"
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --model1_path models/Qwen2.5-0.5B-Instruct \
     --model2_path models/Qwen2.5-0.5B-Instruct \
     --pop_size $POP_SIZE \

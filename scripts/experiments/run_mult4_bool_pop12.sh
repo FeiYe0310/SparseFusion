@@ -15,7 +15,7 @@ else
 fi
 
 PROJECT_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-MAIN_PY="${PROJECT_ROOT}/main_sparsity_aware.py"
+MAIN_PY="${PROJECT_ROOT}/natural_niches_sparsity_aware_fn.py"
 
 # Defaults (can be overridden via extra args)
 POP_SIZE=${POP_SIZE:-12}

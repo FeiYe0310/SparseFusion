@@ -129,7 +129,7 @@ MAIN_ARGS=(
 if (( GPUS_PER_NODE > 1 )); then
   if [[ "$USE_SINGLE_PROCESS_SHARDING" != "0" ]]; then
     echo "[QuickTest] Single-process with ${GPUS_PER_NODE} GPUs (JAX sharding)" >&2
-    exec python main_sparsity_aware.py \
+    exec python natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -138,14 +138,14 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      main_sparsity_aware.py \
+      natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   fi
 else
   echo "[QuickTest] Single-GPU mode" >&2
-  exec python main_sparsity_aware.py \
+  exec python natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

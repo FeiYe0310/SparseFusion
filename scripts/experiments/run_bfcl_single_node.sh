@@ -136,7 +136,7 @@ if (( GPUS_PER_NODE > 1 )); then
     fi
     
     # JAX sharding mode: evaluation on GPU, archive sharded across GPUs
-    exec python main_sparsity_aware.py \
+    exec python natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -156,7 +156,7 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      main_sparsity_aware.py \
+      natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
@@ -166,7 +166,7 @@ else
   # Mode 3: Single-process, single-GPU
   # ===========================================================================
   echo "[BFCL] Launching single-process python run on 1 GPU" >&2
-  exec python main_sparsity_aware.py \
+  exec python natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

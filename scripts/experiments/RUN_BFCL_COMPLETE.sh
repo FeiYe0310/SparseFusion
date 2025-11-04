@@ -187,7 +187,7 @@ if (( GPUS_PER_NODE > 1 )); then
   torchrun \
     --standalone \
     --nproc_per_node="${GPUS_PER_NODE}" \
-    main_sparsity_aware.py \
+    natural_niches_sparsity_aware_fn.py \
     --distributed \
     --archive_backend "${ARCHIVE_BACKEND}" \
     --model1_path "$MODEL1_PATH" \
@@ -209,7 +209,7 @@ else
   echo "🔧 单GPU模式"
   echo ""
   
-  python main_sparsity_aware.py \
+  python natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     --model1_path "$MODEL1_PATH" \
     --model2_path "$MODEL2_PATH" \

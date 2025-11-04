@@ -51,7 +51,7 @@ ARCHIVE_BACKEND="${ARCHIVE_BACKEND:-gpu}"
 # Common dataset default (override by passing --mbpp_data_path ... in CLI)
 export MBPP_DATA_PATH_DEFAULT="${MBPP_DATA_PATH_DEFAULT:-/mnt/shared-storage-user/yefei/SparseFusion/datasets/mbpp_hf}"
 
-# Allow callers to append extra CLI args for main_sparsity_aware.py
+# Allow callers to append extra CLI args for natural_niches_sparsity_aware_fn.py
 MAIN_ARGS=("$@")
 
 if (( GPUS_PER_NODE > 1 )); then
@@ -67,7 +67,7 @@ if (( GPUS_PER_NODE > 1 )); then
       echo "[SparseFusion] Using CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" >&2
     fi
 
-    exec python main_sparsity_aware.py \
+    exec python natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -86,7 +86,7 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      main_sparsity_aware.py \
+      natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
@@ -96,7 +96,7 @@ else
   # Mode 3: Single-process, single-GPU
   # ===========================================================================
   echo "[SparseFusion] Launching single-process python run on 1 GPU" >&2
-  exec python main_sparsity_aware.py \
+  exec python natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

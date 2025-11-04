@@ -416,3 +416,93 @@ __all__ = [
     "parse_bool_from_text",
     "dot_collate",
 ]
+
+    low, high = 10 ** (digits - 1), 10 ** digits - 1
+    data = []
+    for _ in range(num_samples):
+        a, b = rng.randint(low, high), rng.randint(low, high)
+        prompt = f"Compute the product: {a} × {b}. Only output the final integer, no text."
+        data.append({"prompt": prompt, "gold": a * b})
+    return data
+
+
+def generate_bool_dataset(num_samples: int, num_vars: int = 4, seed: int = 42) -> List[Dict]:
+    """生成布尔逻辑表达式数据集"""
+    rng = random.Random(seed)
+    
+    def _rand_bool_expr(vars_vals: Dict[str, bool], max_depth: int = 2):
+        if max_depth <= 0 or rng.random() < 0.4:
+            var = rng.choice(list(vars_vals.keys()))
+            if rng.random() < 0.5:
+                return (f"not {var}", not vars_vals[var])
+            return (var, vars_vals[var])
+        
+        left_expr, left_val = _rand_bool_expr(vars_vals, max_depth - 1)
+        right_expr, right_val = _rand_bool_expr(vars_vals, max_depth - 1)
+        op = rng.choice(["and", "or", "xor"])
+        
+        if op == "and":
+            result_val = left_val and right_val
+        elif op == "or":
+            result_val = left_val or right_val
+        else:
+            result_val = left_val != right_val
+        
+        return (f"({left_expr} {op} {right_expr})", result_val)
+    
+    data = []
+    var_names = [f"v{i}" for i in range(num_vars)]
+    for _ in range(num_samples):
+        vars_vals = {v: rng.choice([True, False]) for v in var_names}
+        expr_str, gold = _rand_bool_expr(vars_vals, 2)
+        var_lines = [f"{v} = {'True' if val else 'False'}" for v, val in vars_vals.items()]
+        prompt = "Given:\n" + "\n".join(var_lines) + f"\n\nEvaluate: {expr_str}\nOnly output True or False, no text."
+        data.append({"prompt": prompt, "gold": gold})
+    return data
+
+
+def parse_int_from_text(text: str) -> int:
+    """从生成文本中解析整数"""
+    numbers = re.findall(r'-?\d+', text.replace(',', ''))
+    return int(numbers[-1]) if numbers else 0
+
+
+def parse_bool_from_text(text: str) -> bool:
+    """从生成文本中解析布尔值"""
+    text_lower = text.strip().lower()
+    return 'true' in text_lower if 'true' in text_lower or 'false' in text_lower else False
+
+
+def dot_collate(batch):
+    """DoT任务的collate函数"""
+    return {
+        "prompts": [item["prompt"] for item in batch],
+        "golds": [item["gold"] for item in batch],
+    }
+
+# ==============================================================================
+# Exports
+# ==============================================================================
+
+__all__ = [
+    # GSM8K
+    "extract_answer",
+    # BFCL
+    "extract_function_call",
+    "evaluate_function_call",
+    "format_functions",
+    "load_bfcl_dataset",
+    "bfcl_collate_fn",
+    # MBPP
+    "MBPPDataset",
+    "mbpp_collate_fn",
+    "safe_execute_code",
+    "clean_code_block",
+    "parse_first_def_name",
+    # DoT
+    "generate_mult_dataset",
+    "generate_bool_dataset",
+    "parse_int_from_text",
+    "parse_bool_from_text",
+    "dot_collate",
+]

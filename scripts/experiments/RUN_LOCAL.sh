@@ -3,7 +3,7 @@
 
 cd /fs-computility/pdz-grp1/yefei.p/SparseFusion
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
   --model1_path /fs-computility/pdz-grp1/yefei.p/SparseFusion/models/Qwen2.5-0.5B-Instruct \
   --model2_path /fs-computility/pdz-grp1/yefei.p/SparseFusion/models/Qwen2.5-0.5B-Instruct \
   --pop_size 5 \

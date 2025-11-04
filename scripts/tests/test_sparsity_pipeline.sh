@@ -24,7 +24,7 @@ echo "========================================="
 echo "测试 1: 仅稀疏度评分（无主动剪枝）"
 echo "========================================="
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --debug_models \
     --pop_size 4 \
     --total_forward_passes 10 \
@@ -52,7 +52,7 @@ echo "========================================="
 echo "测试 2: 稀疏度评分 + Wanda 剪枝"
 echo "========================================="
 
-python main_sparsity_aware.py \
+python natural_niches_sparsity_aware_fn.py \
     --debug_models \
     --pop_size 4 \
     --total_forward_passes 10 \
@@ -72,7 +72,7 @@ else
     echo "   尝试使用 magnitude 剪枝..."
     
     # 备用：使用 magnitude 剪枝
-    python main_sparsity_aware.py \
+    python natural_niches_sparsity_aware_fn.py \
         --debug_models \
         --pop_size 4 \
         --total_forward_passes 10 \
@@ -107,7 +107,7 @@ for omega in 0.2 0.5 0.8; do
     
     echo "  → 测试 omega=$omega, beta=$beta"
     
-    python main_sparsity_aware.py \
+    python natural_niches_sparsity_aware_fn.py \
         --debug_models \
         --pop_size 4 \
         --total_forward_passes 5 \

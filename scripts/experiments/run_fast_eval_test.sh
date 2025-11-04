@@ -20,7 +20,7 @@ echo "  ✓ 预计速度提升 6-10倍"
 echo ""
 
 # 使用eval_subset_size=30进行加速评估
-python3 main_sparsity_aware.py \
+python3 natural_niches_sparsity_aware_fn.py \
   --runs 1 \
   --model1_path ${MODEL1} \
   --model2_path ${MODEL2} \

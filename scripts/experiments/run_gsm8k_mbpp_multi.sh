@@ -91,21 +91,21 @@ if (( GPUS_PER_NODE > 1 )); then
   if [[ "$USE_SINGLE_PROCESS_SHARDING" != "0" ]]; then
     echo "[Mode] Single-process with JAX sharding across ${GPUS_PER_NODE} GPUs" >&2
     JAX_PLATFORM_NAME=cpu \
-    python main_sparsity_aware.py \
+    python natural_niches_sparsity_aware_fn.py \
       --archive_backend "$ARCHIVE_BACKEND" \
       "${COMMON_ARGS[@]}" "$@"
   else
     echo "[Mode] torchrun DDP with ${GPUS_PER_NODE} processes" >&2
     export JAX_PLATFORM_NAME=cpu
     torchrun --standalone --nproc_per_node="$GPUS_PER_NODE" \
-      main_sparsity_aware.py \
+      natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "$ARCHIVE_BACKEND" \
       "${COMMON_ARGS[@]}" "$@"
   fi
 else
   echo "[Mode] Single GPU" >&2
-  python main_sparsity_aware.py \
+  python natural_niches_sparsity_aware_fn.py \
     --archive_backend "$ARCHIVE_BACKEND" \
     "${COMMON_ARGS[@]}" "$@"
 fi
