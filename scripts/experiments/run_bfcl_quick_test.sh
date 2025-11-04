@@ -71,7 +71,7 @@ OUTPUT_DIR="results_bfcl_quick_test"
 
 MODEL1_PATH="models/Qwen2.5-0.5B-Instruct"
 MODEL2_PATH="models/Qwen2.5-0.5B-Instruct"
-BFCL_DATA_PATH="bfcl/data/bfcl_test_200.json"
+BFCL_DATA_PATH="data/bfcl/data/bfcl_test_200.json"
 
 # ============================================================================
 # Pre-flight checks
@@ -129,7 +129,7 @@ MAIN_ARGS=(
 if (( GPUS_PER_NODE > 1 )); then
   if [[ "$USE_SINGLE_PROCESS_SHARDING" != "0" ]]; then
     echo "[QuickTest] Single-process with ${GPUS_PER_NODE} GPUs (JAX sharding)" >&2
-    exec python natural_niches_sparsity_aware_fn.py \
+    exec python main_natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -138,14 +138,14 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      natural_niches_sparsity_aware_fn.py \
+      main_natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   fi
 else
   echo "[QuickTest] Single-GPU mode" >&2
-  exec python natural_niches_sparsity_aware_fn.py \
+  exec python main_natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

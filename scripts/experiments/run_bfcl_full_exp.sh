@@ -34,7 +34,7 @@ echo ""
 
 OUTPUT_DIR_MULTI="results_bfcl_multitask_pop${POP_SIZE}_prune${PRUNING_SPARSITY}"
 
-python natural_niches_sparsity_aware_fn.py \
+python main_natural_niches_sparsity_aware_fn.py \
     --model1_path models/Qwen2.5-0.5B-Instruct \
     --model2_path models/Qwen2.5-0.5B-Instruct \
     --pop_size $POP_SIZE \
@@ -45,7 +45,7 @@ python natural_niches_sparsity_aware_fn.py \
     --pruning_sparsity $PRUNING_SPARSITY \
     --eval_subset_size $EVAL_SUBSET \
     --use_bfcl_eval \
-    --bfcl_data_path bfcl/data/bfcl_test_simple.json \
+    --bfcl_data_path data/bfcl/data/bfcl_test_simple.json \
     --gsm8k_weight 0.5 \
     --bfcl_weight 0.5 \
     --output_dir $OUTPUT_DIR_MULTI \
@@ -59,7 +59,7 @@ echo ""
 
 OUTPUT_DIR_SINGLE="results_gsm8k_baseline_pop${POP_SIZE}_prune${PRUNING_SPARSITY}"
 
-python natural_niches_sparsity_aware_fn.py \
+python main_natural_niches_sparsity_aware_fn.py \
     --model1_path models/Qwen2.5-0.5B-Instruct \
     --model2_path models/Qwen2.5-0.5B-Instruct \
     --pop_size $POP_SIZE \

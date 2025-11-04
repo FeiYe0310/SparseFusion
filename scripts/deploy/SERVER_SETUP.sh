@@ -37,12 +37,12 @@ echo ""
 echo "步骤2: 检查BFCL数据"
 echo "----------------------------------------"
 
-if [ -f "bfcl/data/bfcl_test_200.json" ]; then
-    FILE_SIZE=$(ls -lh bfcl/data/bfcl_test_200.json | awk '{print $5}')
+if [ -f "data/bfcl/data/bfcl_test_200.json" ]; then
+    FILE_SIZE=$(ls -lh data/bfcl/data/bfcl_test_200.json | awk '{print $5}')
     echo "✅ BFCL数据集已存在: $FILE_SIZE"
     
     # 验证数据
-    SAMPLE_COUNT=$(python3 -c "import json; print(len(json.load(open('bfcl/data/bfcl_test_200.json'))))")
+    SAMPLE_COUNT=$(python3 -c "import json; print(len(json.load(open('data/bfcl/data/bfcl_test_200.json'))))")
     echo "✅ 数据样本数: $SAMPLE_COUNT"
 else
     echo "❌ BFCL数据集不存在"

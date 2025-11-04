@@ -45,6 +45,7 @@ class ModelConfig:
             "do_sample": self.do_sample,
         }
 
+
 Model Configuration
 
 Settings related to model architecture and paths.

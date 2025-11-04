@@ -96,7 +96,7 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
         --standalone \
         --nproc_per_node="${GPUS_PER_NODE}" \
-        natural_niches_sparsity_aware_fn.py \
+        main_natural_niches_sparsity_aware_fn.py \
         --model1_path "${MODEL1}" \
         --model2_path "${MODEL2}" \
         --pop_size ${POP_SIZE} \
@@ -110,7 +110,7 @@ if (( GPUS_PER_NODE > 1 )); then
         "${MAIN_ARGS[@]}"
 else
     echo "[Baseline] Launching single-process python run"
-    exec python natural_niches_sparsity_aware_fn.py \
+    exec python main_natural_niches_sparsity_aware_fn.py \
         --model1_path "${MODEL1}" \
         --model2_path "${MODEL2}" \
         --pop_size ${POP_SIZE} \

@@ -75,7 +75,7 @@ MODEL1_PATH="models/Qwen2.5-0.5B-Instruct"
 MODEL2_PATH="models/Qwen2.5-0.5B-Instruct"
 
 # BFCL data path
-BFCL_DATA_PATH="bfcl/data/bfcl_test_200.json"
+BFCL_DATA_PATH="data/bfcl/data/bfcl_test_200.json"
 
 # ============================================================================
 # Pre-flight checks
@@ -155,7 +155,7 @@ if (( GPUS_PER_NODE > 1 )); then
     fi
     
     # JAX sharding mode: evaluation on GPU, archive sharded across GPUs
-    exec python natural_niches_sparsity_aware_fn.py \
+    exec python main_natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -175,7 +175,7 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      natural_niches_sparsity_aware_fn.py \
+      main_natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
@@ -185,7 +185,7 @@ else
   # Mode 3: Single-process, single-GPU
   # ===========================================================================
   echo "[BFCL] Launching single-process python run on 1 GPU" >&2
-  exec python natural_niches_sparsity_aware_fn.py \
+  exec python main_natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

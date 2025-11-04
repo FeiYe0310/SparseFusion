@@ -45,7 +45,7 @@ echo "输出目录: ${OUTPUT_DIR}"
 echo "================================"
 
 # 运行实验
-python3 -u natural_niches_sparsity_aware_fn.py \
+python3 -u main_natural_niches_sparsity_aware_fn.py \
     --runs ${RUNS} \
     --model1_path ${MODEL_NAME} \
     --model2_path ${MODEL_NAME} \

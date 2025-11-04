@@ -50,7 +50,7 @@ EVAL_SUBSET_SIZE=30
 BATCH_SIZE=32
 
 USE_BFCL_EVAL=true
-BFCL_DATA_PATH="bfcl/data/bfcl_test_200.json"
+BFCL_DATA_PATH="data/bfcl/data/bfcl_test_200.json"
 GSM8K_WEIGHT=0.5
 BFCL_WEIGHT=0.5
 
@@ -71,7 +71,7 @@ echo ""
 # ============================================================================
 START_TIME=$(date +%s)
 
-python natural_niches_sparsity_aware_fn.py \
+python main_natural_niches_sparsity_aware_fn.py \
   --archive_backend "${ARCHIVE_BACKEND}" \
   --model1_path "$MODEL1_PATH" \
   --model2_path "$MODEL2_PATH" \

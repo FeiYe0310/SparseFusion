@@ -48,6 +48,7 @@ class TrainingConfig:
             "log_sparsity_stats": self.log_sparsity_stats,
         }
 
+
 Training Configuration
 
 Settings for evolutionary algorithm training.

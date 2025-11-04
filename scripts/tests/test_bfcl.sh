@@ -36,7 +36,7 @@ tokenizer = AutoTokenizer.from_pretrained("models/Qwen2.5-0.5B-Instruct")
 
 print("加载BFCL数据集...")
 dataset = load_bfcl_dataset(
-    data_path="bfcl/data/bfcl_test_simple.json",
+    data_path="data/bfcl/data/bfcl_test_simple.json",
     tokenizer=tokenizer,
     subset_size=5
 )

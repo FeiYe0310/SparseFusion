@@ -60,7 +60,7 @@ EVAL_SUBSET_SIZE="${EVAL_SUBSET_SIZE:-30}"
 
 # BFCL-specific parameters
 USE_BFCL_EVAL="${USE_BFCL_EVAL:-true}"
-BFCL_DATA_PATH="${BFCL_DATA_PATH:-bfcl/data/bfcl_test_200.json}"
+BFCL_DATA_PATH="${BFCL_DATA_PATH:-data/bfcl/data/bfcl_test_200.json}"
 GSM8K_WEIGHT="${GSM8K_WEIGHT:-0.5}"
 BFCL_WEIGHT="${BFCL_WEIGHT:-0.5}"
 
@@ -136,7 +136,7 @@ if (( GPUS_PER_NODE > 1 )); then
     fi
     
     # JAX sharding mode: evaluation on GPU, archive sharded across GPUs
-    exec python natural_niches_sparsity_aware_fn.py \
+    exec python main_natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -156,7 +156,7 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      natural_niches_sparsity_aware_fn.py \
+      main_natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
@@ -166,7 +166,7 @@ else
   # Mode 3: Single-process, single-GPU
   # ===========================================================================
   echo "[BFCL] Launching single-process python run on 1 GPU" >&2
-  exec python natural_niches_sparsity_aware_fn.py \
+  exec python main_natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

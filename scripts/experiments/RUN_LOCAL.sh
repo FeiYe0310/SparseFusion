@@ -3,7 +3,7 @@
 
 cd /fs-computility/pdz-grp1/yefei.p/SparseFusion
 
-python natural_niches_sparsity_aware_fn.py \
+python main_natural_niches_sparsity_aware_fn.py \
   --model1_path /fs-computility/pdz-grp1/yefei.p/SparseFusion/models/Qwen2.5-0.5B-Instruct \
   --model2_path /fs-computility/pdz-grp1/yefei.p/SparseFusion/models/Qwen2.5-0.5B-Instruct \
   --pop_size 5 \
@@ -14,7 +14,7 @@ python natural_niches_sparsity_aware_fn.py \
   --pruning_sparsity 0.3 \
   --eval_subset_size 30 \
   --use_bfcl_eval \
-  --bfcl_data_path /fs-computility/pdz-grp1/yefei.p/SparseFusion/bfcl/data/bfcl_test_200.json \
+  --bfcl_data_path /fs-computility/pdz-grp1/yefei.p/SparseFusion/data/bfcl/data/bfcl_test_200.json \
   --gsm8k_weight 0.5 \
   --bfcl_weight 0.5 \
   --output_dir /fs-computility/pdz-grp1/yefei.p/SparseFusion/results_bfcl_local \

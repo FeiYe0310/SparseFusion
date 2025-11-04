@@ -61,6 +61,7 @@ class EvaluationConfig:
             "bool_few_shot_k": self.bool_few_shot_k,
         }
 
+
 Evaluation Configuration
 
 Settings for model evaluation and batch processing.

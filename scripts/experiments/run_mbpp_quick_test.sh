@@ -31,7 +31,7 @@ BFCL_WEIGHT=0.3
 MBPP_WEIGHT=0.3
 
 # === 数据路径 ===
-BFCL_DATA_PATH="${BFCL_DATA_PATH:-bfcl/data/bfcl_test_200.json}"
+BFCL_DATA_PATH="${BFCL_DATA_PATH:-data/bfcl/data/bfcl_test_200.json}"
 MBPP_DATA_PATH="${MBPP_DATA_PATH:-mbpp/data/mbpp_test_sample.json}"
 
 # === 输出目录 ===
@@ -68,7 +68,7 @@ echo "🚀 开始MBPP三任务快速测试..."
 echo ""
 
 # 运行实验
-python3 natural_niches_sparsity_aware_fn.py \
+python3 main_natural_niches_sparsity_aware_fn.py \
   --runs $RUNS \
   --model1_path "$MODEL1_PATH" \
   --model2_path "$MODEL2_PATH" \

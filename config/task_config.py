@@ -29,8 +29,8 @@ class TaskConfig:
     
     # Dataset paths
     gsm8k_data_path: str = "gsm8k"
-    bfcl_data_path: str = "bfcl/data/bfcl_test_200.json"
-    mbpp_data_path: str = "mbpp"
+    bfcl_data_path: str = "data/bfcl/data/bfcl_test_200.json"
+    mbpp_data_path: str = "data/mbpp"
     
     def __post_init__(self):
         """Validate task configuration"""
@@ -74,7 +74,7 @@ class TaskConfig:
         if self.use_bfcl_eval:
             tasks.append("bfcl")
         if self.use_mbpp_eval:
-            tasks.append("mbpp")
+            tasks.append("data/mbpp")
         if self.use_mult4_eval:
             tasks.append("mult4")
         if self.use_mult5_eval:
@@ -97,6 +97,7 @@ class TaskConfig:
             "bfcl_data_path": self.bfcl_data_path,
             "mbpp_data_path": self.mbpp_data_path,
         }
+
 
 Task Configuration
 
@@ -128,8 +129,8 @@ class TaskConfig:
     
     # Dataset paths
     gsm8k_data_path: str = "gsm8k"
-    bfcl_data_path: str = "bfcl/data/bfcl_test_200.json"
-    mbpp_data_path: str = "mbpp"
+    bfcl_data_path: str = "data/bfcl/data/bfcl_test_200.json"
+    mbpp_data_path: str = "data/mbpp"
     
     def __post_init__(self):
         """Validate task configuration"""
@@ -173,7 +174,7 @@ class TaskConfig:
         if self.use_bfcl_eval:
             tasks.append("bfcl")
         if self.use_mbpp_eval:
-            tasks.append("mbpp")
+            tasks.append("data/mbpp")
         if self.use_mult4_eval:
             tasks.append("mult4")
         if self.use_mult5_eval:

@@ -83,7 +83,7 @@ if (( GPUS_PER_NODE > 1 )); then
       echo "[SparseFusion] Using CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" >&2
     fi
     
-    exec python natural_niches_sparsity_aware_fn.py \
+    exec python main_natural_niches_sparsity_aware_fn.py \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   else
@@ -99,14 +99,14 @@ if (( GPUS_PER_NODE > 1 )); then
     exec torchrun \
       --standalone \
       --nproc_per_node="${GPUS_PER_NODE}" \
-      natural_niches_sparsity_aware_fn.py \
+      main_natural_niches_sparsity_aware_fn.py \
       --distributed \
       --archive_backend "${ARCHIVE_BACKEND}" \
       "${MAIN_ARGS[@]}"
   fi
 else
   echo "[SparseFusion] Launching single-process python run on 1 GPU" >&2
-  exec python natural_niches_sparsity_aware_fn.py \
+  exec python main_natural_niches_sparsity_aware_fn.py \
     --archive_backend "${ARCHIVE_BACKEND}" \
     "${MAIN_ARGS[@]}"
 fi

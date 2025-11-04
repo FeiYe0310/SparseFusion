@@ -48,7 +48,7 @@ while len(converted_data) < 200:
 print(f"✓ 扩充到 {len(converted_data)} 个样本")
 
 # 保存为标准JSON
-output_file = "bfcl/data/bfcl_test_200.json"
+output_file = "data/bfcl/data/bfcl_test_200.json"
 with open(output_file, 'w', encoding='utf-8') as f:
     json.dump(converted_data, f, indent=2, ensure_ascii=False)
 
